@@ -35,6 +35,21 @@ current_workspace_id() {
   fi
 }
 
+# ---------------------------------------------------------------- cache ----
+# `herdr pane list` is polled on every list/connect; cache it briefly so rapid
+# reload keypresses don't re-query the daemon each time.
+pane_list() {
+  local cache="${SESH_BRO_PANE_CACHE:-${TMPDIR:-/tmp}/sesh-bro-panes.json}"
+  if [[ -s $cache ]] && find "$cache" -mmin -2 2>/dev/null | grep -q .; then
+    cat "$cache"
+    return
+  fi
+  local out
+  out="$("$HERDR" pane list)"
+  printf '%s\n' "$out" >"$cache"
+  printf '%s\n' "$out"
+}
+
 # ------------------------------------------------------------------ list ----
 # Emits fzf-ready lines: type \t target \t display
 cmd_list() {
@@ -55,15 +70,21 @@ cmd_list() {
   [[ $source_flag -eq 0 ]] && { want_ws=1; want_ag=1; want_dir=1; }
   statuses="${statuses# }"
 
-  local current=""
-  [[ $hide_current -eq 1 ]] && current="$(current_workspace_id)"
+  # Always resolve the current workspace: it sorts first, and is filtered out
+  # only when --hide-current is given.
+  local current="" hide_val=""
+  current="$(current_workspace_id)"
+  [[ $hide_current -eq 1 ]] && hide_val="$current"
 
   local raw=""
   if [[ $want_ws -eq 1 || $want_ag -eq 1 ]]; then
     if [[ $want_ws -eq 1 ]]; then
-      raw+="$("$HERDR" workspace list | jq -r --arg cur "$current" '
-        .result.workspaces // [] | .[]
-        | select($cur == "" or .workspace_id != $cur)
+      raw+="$("$HERDR" workspace list | jq -r --arg cur "$current" --arg hide "$hide_val" '
+        .result.workspaces // []
+        | map(select($hide == "" or .workspace_id != $hide))
+        | map(.priority = (if $cur != "" and .workspace_id == $cur then 0 else 1 end))
+        | sort_by(.priority, .number)
+        | .[]
         | ["workspace", .workspace_id, (.agent_status // "unknown"),
            (.label // .workspace_id),
            ((.pane_count | tostring) + "p/" + (.tab_count | tostring) + "t"
@@ -72,13 +93,15 @@ cmd_list() {
     fi
     if [[ $want_ag -eq 1 ]]; then
       local ag
-      ag="$("$HERDR" agent list | jq -r --arg cur "$current" --arg st "$statuses" '
+      ag="$("$HERDR" agent list | jq -r --arg cur "$current" --arg hide "$hide_val" --arg st "$statuses" '
         def rank: {blocked: 0, working: 1, done: 2, idle: 3}[.] // 4;
         .result.agents // []
         | map(.agent_status = (.agent_status // "unknown"))
-        | map(select($cur == "" or .workspace_id != $cur))
+        | map(select($hide == "" or .workspace_id != $hide))
         | map(. as $agent | select($st == "" or ((" " + $st + " ") | test(" " + $agent.agent_status + " "))))
-        | sort_by(.agent_status | rank) | .[]
+        | map(.priority = (if $cur != "" and .workspace_id == $cur then 0 else 1 end))
+        | sort_by(.priority, (.agent_status | rank), (.name // ""))
+        | .[]
         | ["agent", (.name // .pane_id), .agent_status,
            (.name // .agent // .pane_id),
            ((.agent // "?") + " · " + (.terminal_title_stripped // .cwd // ""))]
@@ -88,7 +111,7 @@ cmd_list() {
   fi
   if [[ $want_dir -eq 1 ]] && command -v zoxide >/dev/null 2>&1; then
     local known
-    known="$("$HERDR" pane list | jq -r '.result.panes // [] | .[].cwd // empty' | sort -u || true)"
+    known="$(pane_list | jq -r '.result.panes // [] | .[].cwd // empty' | sort -u || true)"
     local dz path base
     dz="$(zoxide query --list 2>/dev/null || true)"
     while IFS= read -r path; do
@@ -133,18 +156,37 @@ cmd_connect() {
       ;;
     dir)
       local ws
-      ws="$("$HERDR" pane list | jq -r --arg p "$target" \
+      ws="$(pane_list | jq -r --arg p "$target" \
         '.result.panes // [] | map(select(.cwd == $p)) | .[0].workspace_id // empty')"
       if [[ -n $ws ]]; then
         "$HERDR" workspace focus "$ws" >/dev/null
       else
-        command -v zoxide >/dev/null 2>&1 && zoxide add "$target" 2>/dev/null || true
+        if command -v zoxide >/dev/null 2>&1; then
+          zoxide add "$target" 2>/dev/null || true
+        fi
         local label="${target##*/}"; [[ -z $label ]] && label="$target"
         "$HERDR" workspace create --cwd "$target" --label "$label" --focus >/dev/null
       fi
       ;;
     *) echo "sesh-bro connect: unknown type $type" >&2; exit 2 ;;
   esac
+}
+
+# ------------------------------------------------------------------ create ----
+# Create a new workspace from a directory (used by the ^/ picker bind).
+cmd_create() {
+  local path="${1:-}"
+  if [[ -z $path ]]; then
+    read -r -p "Path: " -e -i "$PWD" path </dev/tty 2>/dev/null || path="$PWD"
+  fi
+  [[ -z $path ]] && { echo "sesh-bro create: no path" >&2; exit 1; }
+  path="$(printf '%s' "$path" | sed "s|^~|$HOME|")"
+  [[ -d $path ]] || { echo "sesh-bro create: not a directory: $path" >&2; exit 1; }
+  if command -v zoxide >/dev/null 2>&1; then
+    zoxide add "$path" 2>/dev/null || true
+  fi
+  local label="${path##*/}"; [[ -z $label ]] && label="$path"
+  "$HERDR" workspace create --cwd "$path" --label "$label" --focus >/dev/null
 }
 
 # --------------------------------------------------------------- preview ----
@@ -198,28 +240,33 @@ cmd_preview() {
 
 # ---------------------------------------------------------------- picker ----
 cmd_picker() {
-  local args="${SESH_BRO_ARGS:-} $*"
+  # shellcheck disable=SC2206 # SESH_BRO_ARGS is a space-delimited flag list from cmd_open
+  local picker_args=(${SESH_BRO_ARGS:-} "$@")
   local hide_flag=""
-  [[ " $args " == *" --hide-current "* ]] && hide_flag="--hide-current"
+  local arg
+  for arg in "${picker_args[@]+"${picker_args[@]}"}"; do
+    [[ $arg == "--hide-current" ]] && hide_flag="--hide-current"
+  done
 
   command -v fzf >/dev/null 2>&1 || { echo "sesh-bro: fzf is required" >&2; exit 1; }
 
   local selection
-  selection="$("$SELF" list $args | fzf \
+  selection="$("$SELF" list "${picker_args[@]+"${picker_args[@]}"}" | fzf \
     --ansi \
     --delimiter='\t' \
     --with-nth='3..' \
     --layout=reverse \
     --tiebreak=index \
     --prompt='sesh> ' \
-    --header='enter connect · ^w workspaces · ^a agents · ^b blocked · ^d dirs · ^l all' \
+    --header='enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all · ^/ create' \
     --preview="'$SELF' preview {1} {2}" \
     --preview-window='right,60%,border-left' \
     --bind="ctrl-w:reload('$SELF' list --workspaces $hide_flag)" \
-    --bind="ctrl-a:reload('$SELF' list --agents $hide_flag)" \
+    --bind="ctrl-e:reload('$SELF' list --agents $hide_flag)" \
     --bind="ctrl-b:reload('$SELF' list --blocked $hide_flag)" \
-    --bind="ctrl-d:reload('$SELF' list --dirs $hide_flag)" \
-    --bind="ctrl-l:reload('$SELF' list $hide_flag)" \
+    --bind="ctrl-x:reload('$SELF' list --dirs $hide_flag)" \
+    --bind="ctrl-o:reload('$SELF' list $hide_flag)" \
+    --bind="ctrl-/:execute('$SELF' create)+reload('$SELF' list $hide_flag)" \
   )" || true
 
   [[ -z $selection ]] && exit 0
@@ -228,8 +275,8 @@ cmd_picker() {
   type="$(printf '%s' "$selection" | cut -f1)"
   target="$(printf '%s' "$selection" | cut -f2)"
   if ! cmd_connect "$type" "$target"; then
-    echo "sesh-bro: failed to connect to $type $target" >&2
-    sleep 3
+    printf 'sesh-bro: failed to connect to %s %s\n' "$type" "$target" >&2
+    read -r -p "Press enter to return to the picker..." -n 1 _ </dev/tty 2>/dev/null || sleep 1
     exit 1
   fi
 }
@@ -257,6 +304,7 @@ commands:
   list   [flags]     print picker candidates (type, target, display)
   connect TYPE TARGET
                      focus a workspace/agent, or create a workspace for a dir
+  create [PATH]      create a workspace for a directory (default: current dir)
   preview TYPE TARGET
                      render the preview used by the picker
   open   [flags]     open the picker popup through the Herdr plugin API
@@ -281,6 +329,7 @@ main() {
     picker)        cmd_picker "$@" ;;
     list)          cmd_list "$@" ;;
     connect)       cmd_connect "$@" ;;
+    create)        cmd_create "$@" ;;
     preview)       cmd_preview "$@" ;;
     open)          cmd_open "$@" ;;
     -h|--help|help) usage ;;
