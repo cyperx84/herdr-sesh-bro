@@ -213,7 +213,7 @@ cmd_picker() {
     --tiebreak=index \
     --prompt='sesh> ' \
     --header='enter connect · ^w workspaces · ^a agents · ^b blocked · ^d dirs · ^l all' \
-    --preview="'$SELF' preview {1} \"{2}\"" \
+    --preview="'$SELF' preview {1} {2}" \
     --preview-window='right,60%,border-left' \
     --bind="ctrl-w:reload('$SELF' list --workspaces $hide_flag)" \
     --bind="ctrl-a:reload('$SELF' list --agents $hide_flag)" \
