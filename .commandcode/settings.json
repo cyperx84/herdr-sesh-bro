@@ -10,7 +10,19 @@
       "Shell(git remote -v; echo \"---\"; git log --oneline -5 2>/dev/null; echo \"---\"; git status --short)",
       "Shell(herdr --version 2>/dev/null; command -v herdr fzf zoxide jq)",
       "Shell(gh:*)",
-      "Shell(git:*)"
+      "Shell(git:*)",
+      "Shell(git commit -F - <<'EOF' Initial commit: sesh-style fuzzy session picker plugin for Herdr Co-authored-by: CommandCodeBot <noreply@commandcode.ai> EOF)",
+      "Shell(./sesh-bro:*)",
+      "Shell(bash -x ./sesh-bro list 2 >& 1)",
+      "Shell(grep:*)",
+      "Shell(echo \"HERDR_WORKSPACE_ID=[${HERDR_WORKSPACE_ID:-}]\"; echo \"HERDR_PLUGIN_CONTEXT_JSON=[${HERDR_PLUGIN_CONTEXT_JSON:-}]\"; echo \"== direct call ==\"; source /dev/stdin <<'EOF' 2>&1 current_workspace_id() { if [[ -n ${HERDR_WORKSPACE_ID:-} ]]; then printf '%s' \"$HERDR_WORKSPACE_ID\" elif [[ -n ${HERDR_PLUGIN_CONTEXT_JSON:-} ]]; then printf '%s' \"$HERDR_PLUGIN_CONTEXT_JSON\" | jq -r '.. | .workspace_id? // empty' 2>/dev/null | head -1 fi } printf '[%s]\\n' \"$(current_workspace_id)\" EOF)",
+      "Shell(echo \"== parens around test() ==\"; echo '{\"result\":{\"agents\":[{\"name\":\"a\",\"agent_status\":\"idle\"},{\"name\":\"b\"},{\"name\":\"c\",\"agent_status\":\"working\"}]}}' | jq -r ' .result.agents // [] | map(.agent_status = (.agent_status // \"unknown\")) | map(select($st == \"\" or ((\" \" + $st + \" \") | test(\" \" + .agent_status + \" \")))) | .[].name' --arg st \"\" 2>&1; echo \"exit: $?\")",
+      "Shell(bash -x ./sesh-bro list --blocked 2 >& 1)",
+      "Shell(echo \"== single agent with status ==\"; echo '{\"result\":{\"agents\":[{\"name\":\"a\",\"agent_status\":\"idle\"}]}}' | jq -r ' .result.agents // [] | map(select($st == \"\" or ((\" \" + $st + \" \") | test(\" \" + .agent_status + \" \")))) | .[].name' --arg st \"blocked\" 2>&1; echo \"exit: $?\" echo \"== map() with .agent_status ==\"; echo '{\"result\":{\"agents\":[{\"name\":\"a\",\"agent_status\":\"idle\"}]}}' | jq -r ' .result.agents // [] | map(.agent_status = (.agent_status // \"unknown\")) | map(select($st == \"\" or ((\" \" + $st + \" \") | test(\" \" + .agent_status + \" \")))) | .[].name' --arg st \"blocked\" 2>&1; echo \"exit: $?\")",
+      "Shell(echo \"== test() with .agent_status from map's . ==\"; echo '{\"result\":{\"agents\":[{\"name\":\"a\",\"agent_status\":\"idle\"}]}}' | jq -r ' .result.agents // [] | map(. as $agent | select(($st == \"\") or ((\" \" + $st + \" \") | test(\" \" + $agent.agent_status + \" \")))) | .[].name' --arg st \"blocked\" 2>&1; echo \"exit: $?\" echo \"== test() with explicit param ==\"; echo '{\"result\":{\"agents\":[{\"name\":\"a\",\"agent_status\":\"idle\"}]}}' | jq -r ' .result.agents // [] | map(. as $agent | select(($st == \"\") or ((\" \" + $st + \" \") | test(\" \" + $agent.agent_status + \" \")))) | .[].name' --arg st \"\" 2>&1; echo \"exit: $?\")",
+      "Shell(bash -x ./sesh-bro list 2>&1 | grep -A1 \"read -r type\" | head -6; echo \"== status_color test ==\"; source <(sed -n '1,23p' sesh-bro); status_color idle | cat -A)",
+      "Shell(C_RESET=$'\\033[0m' C_DIM=$'\\033[2m' status_color() { case \"$1\" in blocked) printf '\\033[31m' ;; working) printf '\\033[33m' ;; idle) printf '\\033[32m' ;; done) printf '\\033[34m' ;; *) printf '\\033[90m' ;; esac } raw=$'workspace\\tw2J\\tidle\\ttrack-a-arcade\\t1p/1t\\nagent\\tw3J:p1\\tworking\\tcmd\\tcmd · x' while IFS=$'\\t' read -r type target status label detail; do [[ -z ${type:-} ]] && continue color=\"$(status_color \"$status\")\" case \"$type\" in workspace) icon=\"$color◆$C_RESET\" ;; agent) icon=\"$color●$C_RESET\" ;; dir) icon=\"\\033[36m▸$C_RESET\" ;; esac printf '%s\\t%s\\t%s %s %s\\n' \"$type\" \"$target\" \"$icon\" \"$label\" \"$C_DIM$detail$C_RESET\" done <<< \"$raw\")",
+      "Shell(od:*)"
     ],
     "deny": [],
     "defaultMode": "default"

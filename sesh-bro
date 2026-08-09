@@ -74,10 +74,11 @@ cmd_list() {
       ag="$("$HERDR" agent list | jq -r --arg cur "$current" --arg st "$statuses" '
         def rank: {blocked: 0, working: 1, done: 2, idle: 3}[.] // 4;
         .result.agents // []
+        | map(.agent_status = (.agent_status // "unknown"))
         | map(select($cur == "" or .workspace_id != $cur))
-        | map(select($st == "" or (" " + $st + " ") | test(" " + .agent_status + " ")))
+        | map(. as $agent | select($st == "" or ((" " + $st + " ") | test(" " + $agent.agent_status + " "))))
         | sort_by(.agent_status | rank) | .[]
-        | ["agent", (.name // .pane_id), (.agent_status // "unknown"),
+        | ["agent", (.name // .pane_id), .agent_status,
            (.name // .agent // .pane_id),
            ((.agent // "?") + " · " + (.terminal_title_stripped // .cwd // ""))]
         | @tsv')"
@@ -111,8 +112,8 @@ cmd_list() {
     [[ -z ${type:-} ]] && continue
     color="$(status_color "$status")"
     case "$type" in
-      workspace) icon="$color◆$C_RESET" ;;
-      agent)     icon="$color●$C_RESET" ;;
+      workspace) icon="${color}◆${C_RESET}" ;;
+      agent)     icon="${color}●${C_RESET}" ;;
       dir)       icon="\033[36m▸$C_RESET" ;;
     esac
     printf '%s\t%s\t%s %s %s\n' "$type" "$target" "$icon" "$label" "$C_DIM$detail$C_RESET"
