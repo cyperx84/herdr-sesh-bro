@@ -21,6 +21,7 @@ status_color() {
     working) printf '\033[33m' ;;
     idle)    printf '\033[32m' ;;
     done)    printf '\033[34m' ;;
+    dir)     printf '\033[36m' ;;
     *)       printf '\033[90m' ;;
   esac
 }
@@ -114,7 +115,7 @@ cmd_list() {
     case "$type" in
       workspace) icon="${color}◆${C_RESET}" ;;
       agent)     icon="${color}●${C_RESET}" ;;
-      dir)       icon="\033[36m▸$C_RESET" ;;
+      dir)       icon="$(status_color dir)▸${C_RESET}" ;;
     esac
     printf '%s\t%s\t%s %s %s\n' "$type" "$target" "$icon" "$label" "$C_DIM$detail$C_RESET"
   done <<< "$raw"

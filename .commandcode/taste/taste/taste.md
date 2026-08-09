@@ -6,3 +6,5 @@
 - Communicates in very terse, casual, lowercase shorthand (e.g. "wats going on in this repo"); fine with informal tone. Confidence: 0.5
 - Operates in a terminal-centric macOS stack: Herdr (0.8.0, workspaces/agents/plugins), sesh-style fzf session pickers, zoxide, eza, jq, bash scripting — all confirmed installed on their machine. Confidence: 0.6
 zoxide, eza, bash scripting. Confidence: 0.5
+- Wants their projects initialized as git repos with a GitHub origin remote set up (via `gh`) rather than left as plain unversioned folders. Confidence: 0.7
+- Prefers to install and test tools hands-on in the real environment as they're being built ("lets install this and test it out as we built this"), expecting bugs to be found and fixed through actual usage. Confidence: 0.6
