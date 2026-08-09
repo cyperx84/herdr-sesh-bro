@@ -161,7 +161,7 @@ cmd_preview() {
       local pane
       pane="$("$HERDR" pane list --workspace "$target" | jq -r \
         '.result.panes // [] | (map(select(.focused)) | .[0].pane_id) // .[0].pane_id // empty')"
-      [[ -n $pane ]] && "$HERDR" pane read "$pane" --source visible
+      [[ -n $pane ]] && "$HERDR" pane read "$pane" --source visible --ansi
       ;;
     agent)
       local ag
@@ -172,7 +172,7 @@ cmd_preview() {
         "$C_DIM" \
         "$(printf '%s' "$ag" | jq -r '.result.agent.agent_status // "unknown"')" \
         "$(printf '%s' "$ag" | jq -r '.result.agent.cwd // ""')" "$C_RESET"
-      "$HERDR" agent read "$target" --source visible
+      "$HERDR" agent read "$target" --source visible --ansi
       ;;
     dir)
       printf '\033[36m▸ %s%s\n\n' "$target" "$C_RESET"
