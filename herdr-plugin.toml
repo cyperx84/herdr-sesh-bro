@@ -1,0 +1,32 @@
+id = "sesh-bro"
+name = "Sesh Bro"
+version = "0.1.0"
+min_herdr_version = "0.7.4"
+description = "sesh-style fuzzy picker for Herdr — workspaces, agents, and zoxide dirs with live pane previews"
+platforms = ["linux", "macos"]
+
+[[panes]]
+id = "picker"
+title = "Sesh Bro"
+placement = "popup"
+width = "80%"
+height = "70%"
+command = ["bash", "sesh-bro", "picker"]
+
+[[actions]]
+id = "open"
+title = "Open sesh-bro picker"
+contexts = ["workspace"]
+command = ["bash", "sesh-bro", "open"]
+
+[[actions]]
+id = "agents"
+title = "Open sesh-bro picker (agents only)"
+contexts = ["workspace"]
+command = ["bash", "sesh-bro", "open", "--agents"]
+
+[[actions]]
+id = "blocked"
+title = "Open sesh-bro picker (blocked agents)"
+contexts = ["workspace"]
+command = ["bash", "sesh-bro", "open", "--blocked"]

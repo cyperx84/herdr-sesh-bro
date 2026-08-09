@@ -1,0 +1,290 @@
+#!/usr/bin/env bash
+# sesh-bro — sesh-style fuzzy session picker for Herdr.
+# Workspaces, agents, and zoxide dirs in one fzf popup with live pane previews.
+set -euo pipefail
+
+HERDR="${HERDR_BIN_PATH:-herdr}"
+VERSION="0.1.0"
+
+if [[ -f $0 ]]; then
+  SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+else
+  SELF="$(command -v sesh-bro)"
+fi
+
+# ---------------------------------------------------------------- colors ----
+C_RESET=$'\033[0m'
+C_DIM=$'\033[2m'
+status_color() {
+  case "$1" in
+    blocked) printf '\033[31m' ;;
+    working) printf '\033[33m' ;;
+    idle)    printf '\033[32m' ;;
+    done)    printf '\033[34m' ;;
+    *)       printf '\033[90m' ;;
+  esac
+}
+
+# ------------------------------------------------------------- env context ----
+current_workspace_id() {
+  if [[ -n ${HERDR_WORKSPACE_ID:-} ]]; then
+    printf '%s' "$HERDR_WORKSPACE_ID"
+  elif [[ -n ${HERDR_PLUGIN_CONTEXT_JSON:-} ]]; then
+    printf '%s' "$HERDR_PLUGIN_CONTEXT_JSON" | jq -r '.. | .workspace_id? // empty' 2>/dev/null | head -1
+  fi
+}
+
+# ------------------------------------------------------------------ list ----
+# Emits fzf-ready lines: type \t target \t display
+cmd_list() {
+  local want_ws=0 want_ag=0 want_dir=0 statuses="" hide_current=0 as_json=0 source_flag=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --workspaces) want_ws=1; source_flag=1 ;;
+      --agents)     want_ag=1; source_flag=1 ;;
+      --dirs)       want_dir=1; source_flag=1 ;;
+      --blocked|--working|--done|--idle)
+        statuses="$statuses ${1#--}"; want_ag=1; want_ws=0; want_dir=0; source_flag=1 ;;
+      --hide-current) hide_current=1 ;;
+      --json) as_json=1 ;;
+      *) echo "sesh-bro list: unknown flag $1" >&2; exit 2 ;;
+    esac
+    shift
+  done
+  [[ $source_flag -eq 0 ]] && { want_ws=1; want_ag=1; want_dir=1; }
+  statuses="${statuses# }"
+
+  local current=""
+  [[ $hide_current -eq 1 ]] && current="$(current_workspace_id)"
+
+  local raw=""
+  if [[ $want_ws -eq 1 || $want_ag -eq 1 ]]; then
+    if [[ $want_ws -eq 1 ]]; then
+      raw+="$("$HERDR" workspace list | jq -r --arg cur "$current" '
+        .result.workspaces // [] | .[]
+        | select($cur == "" or .workspace_id != $cur)
+        | ["workspace", .workspace_id, (.agent_status // "unknown"),
+           (.label // .workspace_id),
+           ((.pane_count | tostring) + "p/" + (.tab_count | tostring) + "t"
+            + (if .focused then " · current" else "" end))]
+        | @tsv')"
+    fi
+    if [[ $want_ag -eq 1 ]]; then
+      local ag
+      ag="$("$HERDR" agent list | jq -r --arg cur "$current" --arg st "$statuses" '
+        def rank: {blocked: 0, working: 1, done: 2, idle: 3}[.] // 4;
+        .result.agents // []
+        | map(select($cur == "" or .workspace_id != $cur))
+        | map(select($st == "" or (" " + $st + " ") | test(" " + .agent_status + " ")))
+        | sort_by(.agent_status | rank) | .[]
+        | ["agent", (.name // .pane_id), (.agent_status // "unknown"),
+           (.name // .agent // .pane_id),
+           ((.agent // "?") + " · " + (.terminal_title_stripped // .cwd // ""))]
+        | @tsv')"
+      [[ -n $ag ]] && raw+=$'\n'"$ag"
+    fi
+  fi
+  if [[ $want_dir -eq 1 ]] && command -v zoxide >/dev/null 2>&1; then
+    local known
+    known="$("$HERDR" pane list | jq -r '.result.panes // [] | .[].cwd // empty' | sort -u || true)"
+    local dz path base
+    dz="$(zoxide query --list 2>/dev/null || true)"
+    while IFS= read -r path; do
+      [[ -z $path ]] && continue
+      if [[ -n $known ]] && printf '%s\n' "$known" | grep -Fxq "$path"; then
+        continue
+      fi
+      base="${path##*/}"; [[ -z $base ]] && base="$path"
+      [[ -n $raw ]] && raw+=$'\n'
+      raw+="dir"$'\t'"$path"$'\t'"-"$'\t'"$base"$'\t'"$path"
+    done <<< "$dz"
+  fi
+
+  if [[ $as_json -eq 1 ]]; then
+    printf '%s\n' "$raw" | jq -R 'select(length > 0) | split("\t")
+      | {type: .[0], target: .[1], status: .[2], label: .[3], detail: .[4]}'
+    return
+  fi
+
+  local type target status label detail icon color
+  while IFS=$'\t' read -r type target status label detail; do
+    [[ -z ${type:-} ]] && continue
+    color="$(status_color "$status")"
+    case "$type" in
+      workspace) icon="$color◆$C_RESET" ;;
+      agent)     icon="$color●$C_RESET" ;;
+      dir)       icon="\033[36m▸$C_RESET" ;;
+    esac
+    printf '%s\t%s\t%s %s %s\n' "$type" "$target" "$icon" "$label" "$C_DIM$detail$C_RESET"
+  done <<< "$raw"
+}
+
+# --------------------------------------------------------------- connect ----
+cmd_connect() {
+  local type="$1" target="$2"
+  case "$type" in
+    workspace)
+      "$HERDR" workspace focus "$target" >/dev/null
+      ;;
+    agent)
+      "$HERDR" agent focus "$target" >/dev/null
+      ;;
+    dir)
+      local ws
+      ws="$("$HERDR" pane list | jq -r --arg p "$target" \
+        '.result.panes // [] | map(select(.cwd == $p)) | .[0].workspace_id // empty')"
+      if [[ -n $ws ]]; then
+        "$HERDR" workspace focus "$ws" >/dev/null
+      else
+        command -v zoxide >/dev/null 2>&1 && zoxide add "$target" 2>/dev/null || true
+        local label="${target##*/}"; [[ -z $label ]] && label="$target"
+        "$HERDR" workspace create --cwd "$target" --label "$label" --focus >/dev/null
+      fi
+      ;;
+    *) echo "sesh-bro connect: unknown type $type" >&2; exit 2 ;;
+  esac
+}
+
+# --------------------------------------------------------------- preview ----
+cmd_preview() {
+  local type="$1" target="$2"
+  case "$type" in
+    workspace)
+      local ws
+      ws="$("$HERDR" workspace get "$target")"
+      printf '%s◆ %s%s  %s(%s)%s\n\n' \
+        "$(status_color "$(printf '%s' "$ws" | jq -r '.result.workspace.agent_status // "unknown"')")" \
+        "$(printf '%s' "$ws" | jq -r '.result.workspace.label // ""')" "$C_RESET" \
+        "$C_DIM" "$target" "$C_RESET"
+      local pane
+      pane="$("$HERDR" pane list --workspace "$target" | jq -r \
+        '.result.panes // [] | (map(select(.focused)) | .[0].pane_id) // .[0].pane_id // empty')"
+      [[ -n $pane ]] && "$HERDR" pane read "$pane" --source visible
+      ;;
+    agent)
+      local ag
+      ag="$("$HERDR" agent get "$target")"
+      printf '%s● %s%s  %s%s · %s%s\n\n' \
+        "$(status_color "$(printf '%s' "$ag" | jq -r '.result.agent.agent_status // "unknown"')")" \
+        "$(printf '%s' "$ag" | jq -r '.result.agent.name // .result.agent.agent // ""')" "$C_RESET" \
+        "$C_DIM" \
+        "$(printf '%s' "$ag" | jq -r '.result.agent.agent_status // "unknown"')" \
+        "$(printf '%s' "$ag" | jq -r '.result.agent.cwd // ""')" "$C_RESET"
+      "$HERDR" agent read "$target" --source visible
+      ;;
+    dir)
+      printf '\033[36m▸ %s%s\n\n' "$target" "$C_RESET"
+      if command -v eza >/dev/null 2>&1; then
+        eza -la --color=always --group-directories-first --no-user --time-style=relative "$target"
+      else
+        ls -la "$target"
+      fi
+      local readme
+      readme="$(find "$target" -maxdepth 1 -iname 'readme*' -type f 2>/dev/null | head -1)"
+      if [[ -n $readme ]]; then
+        printf '\n%s── %s ──%s\n\n' "$C_DIM" "$(basename "$readme")" "$C_RESET"
+        if command -v bat >/dev/null 2>&1; then
+          bat --color=always --style=plain --paging=never --line-range :40 "$readme"
+        else
+          sed -n '1,40p' "$readme"
+        fi
+      fi
+      ;;
+    *) echo "no preview" ;;
+  esac
+}
+
+# ---------------------------------------------------------------- picker ----
+cmd_picker() {
+  local args="${SESH_BRO_ARGS:-} $*"
+  local hide_flag=""
+  [[ " $args " == *" --hide-current "* ]] && hide_flag="--hide-current"
+
+  command -v fzf >/dev/null 2>&1 || { echo "sesh-bro: fzf is required" >&2; exit 1; }
+
+  local selection
+  selection="$("$SELF" list $args | fzf \
+    --ansi \
+    --delimiter='\t' \
+    --with-nth='3..' \
+    --layout=reverse \
+    --tiebreak=index \
+    --prompt='sesh> ' \
+    --header='enter connect · ^w workspaces · ^a agents · ^b blocked · ^d dirs · ^l all' \
+    --preview="'$SELF' preview {1} \"{2}\"" \
+    --preview-window='right,60%,border-left' \
+    --bind="ctrl-w:reload('$SELF' list --workspaces $hide_flag)" \
+    --bind="ctrl-a:reload('$SELF' list --agents $hide_flag)" \
+    --bind="ctrl-b:reload('$SELF' list --blocked $hide_flag)" \
+    --bind="ctrl-d:reload('$SELF' list --dirs $hide_flag)" \
+    --bind="ctrl-l:reload('$SELF' list $hide_flag)" \
+  )" || true
+
+  [[ -z $selection ]] && exit 0
+
+  local type target
+  type="$(printf '%s' "$selection" | cut -f1)"
+  target="$(printf '%s' "$selection" | cut -f2)"
+  if ! cmd_connect "$type" "$target"; then
+    echo "sesh-bro: failed to connect to $type $target" >&2
+    sleep 3
+    exit 1
+  fi
+}
+
+# ------------------------------------------------------------------ open ----
+# Used by manifest actions: opens the picker pane on the foreground client.
+cmd_open() {
+  local plugin_id="${HERDR_PLUGIN_ID:-sesh-bro}"
+  if [[ $# -gt 0 ]]; then
+    exec "$HERDR" plugin pane open --plugin "$plugin_id" --entrypoint picker \
+      --env "SESH_BRO_ARGS=$*"
+  fi
+  exec "$HERDR" plugin pane open --plugin "$plugin_id" --entrypoint picker
+}
+
+# ------------------------------------------------------------------ main ----
+usage() {
+  cat <<EOF
+sesh-bro $VERSION — sesh-style fuzzy session picker for Herdr
+
+usage: sesh-bro <command> [flags]
+
+commands:
+  picker [flags]     open the fzf picker (default)
+  list   [flags]     print picker candidates (type, target, display)
+  connect TYPE TARGET
+                     focus a workspace/agent, or create a workspace for a dir
+  preview TYPE TARGET
+                     render the preview used by the picker
+  open   [flags]     open the picker popup through the Herdr plugin API
+
+flags:
+  --workspaces       only Herdr workspaces
+  --agents           only agents (across all workspaces)
+  --dirs             only zoxide directories
+  --blocked          only blocked agents (needs attention)
+  --working          only working agents
+  --done             only done agents
+  --idle             only idle agents
+  --hide-current     hide the current workspace and its agents
+  --json             machine-readable list output
+EOF
+}
+
+main() {
+  local cmd="${1:-picker}"
+  [[ $# -gt 0 ]] && shift
+  case "$cmd" in
+    picker)        cmd_picker "$@" ;;
+    list)          cmd_list "$@" ;;
+    connect)       cmd_connect "$@" ;;
+    preview)       cmd_preview "$@" ;;
+    open)          cmd_open "$@" ;;
+    -h|--help|help) usage ;;
+    -v|--version)  echo "sesh-bro $VERSION" ;;
+    *) echo "sesh-bro: unknown command $cmd" >&2; usage >&2; exit 2 ;;
+  esac
+}
+
+main "$@"

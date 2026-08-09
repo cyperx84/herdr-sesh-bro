@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(for t in herdr fzf jq zoxide eza bat; do printf '%-8s %s\\n' \"$t\" \"$(command -v $t 2>/dev/null || echo MISSING)\"; done; herdr --version 2>/dev/null; fzf --version 2>/dev/null)",
+      "Shell(herdr:*)",
+      "Shell(jq:*)",
+      "Shell(echo \"BIN_PATH=$HERDR_BIN_PATH\"; \"$HERDR_BIN_PATH\" --version 2>/dev/null; herdr --version; echo \"SOCKET=$HERDR_SOCKET_PATH\"; echo \"WS=$HERDR_WORKSPACE_ID\")",
+      "Shell(ls ~/.config/herdr/ 2>/dev/null; ls ~/.local/share/herdr* 2>/dev/null; ls ~/.herdr* 2>/dev/null; find ~ -maxdepth 4 -name \"herdr\" -type f 2>/dev/null | grep -v homebrew | head; ls -la /opt/homebrew/bin/herdr)",
+      "Shell(herdr update --handoff 2>&1; echo \"exit=$?\")",
+      "Shell(git remote -v; echo \"---\"; git log --oneline -5 2>/dev/null; echo \"---\"; git status --short)",
+      "Shell(herdr --version 2>/dev/null; command -v herdr fzf zoxide jq)",
+      "Shell(gh:*)",
+      "Shell(git:*)"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}
