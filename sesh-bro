@@ -6,15 +6,23 @@ set -euo pipefail
 HERDR="${HERDR_BIN_PATH:-herdr}"
 
 # Single source of truth for the version is the manifest; the script reads it
-# at startup so the two can never drift. Fall back for direct ./sesh-bro runs.
-VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$(dirname "$0")/herdr-plugin.toml" 2>/dev/null | head -1)"
-VERSION="${VERSION:-0.1.0}"
-
-if [[ -f $0 ]]; then
+# at startup so the two can never drift.
+# Resolve the script's real path, following symlinks (so PATH/symlinked
+# installs like `herdr plugin install` still find the manifest next to it).
+if SELF="$(readlink -f "$0" 2>/dev/null)" || SELF="$(realpath "$0" 2>/dev/null)"; then
+  :
+elif [[ -f $0 ]]; then
   SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 else
   SELF="$(command -v sesh-bro)"
 fi
+SELF="${SELF:-}"
+
+# Single source of truth for the version is the manifest next to the script;
+# the script reads it at startup so the two can never drift.
+SELF_DIR="$(dirname "$SELF")"
+VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$SELF_DIR/herdr-plugin.toml" 2>/dev/null | head -1)"
+VERSION="${VERSION:-0.1.0}"
 
 # Path-safe form of SELF for embedding inside fzf --preview/--bind strings:
 # single-quote it (doubling any embedded single quotes) so plugin dirs with
@@ -178,7 +186,9 @@ cmd_list() {
   fi
   if [[ $want_dir -eq 1 ]] && [[ $CFG_DIR_SOURCES -eq 1 ]] && command -v zoxide >/dev/null 2>&1; then
     local known
-    known="$(pane_list | jq -r '.result.panes // [] | .[].cwd // empty' | sort -u || true)"
+    # If pane list fails (daemon hiccup), list dirs without dedup rather than
+    # failing the whole list — and don't leak the raw error into the picker.
+    known="$(pane_list 2>/dev/null | jq -r '.result.panes // [] | .[].cwd // empty' | sort -u || true)"
     local dz path base
     dz="$(zoxide query --list 2>/dev/null || true)"
     while IFS= read -r path; do
@@ -278,26 +288,30 @@ cmd_connect() {
   local type="$1" target="$2"
   case "$type" in
     workspace)
-      "$HERDR" workspace focus "$target" >/dev/null \
+      "$HERDR" workspace focus "$target" >/dev/null 2>&1 \
         || { echo "sesh-bro: failed to focus workspace $target" >&2; return 1; }
       ;;
     agent)
-      "$HERDR" agent focus "$target" >/dev/null \
+      "$HERDR" agent focus "$target" >/dev/null 2>&1 \
         || { echo "sesh-bro: failed to focus agent $target" >&2; return 1; }
       ;;
     dir)
       local ws
-      ws="$(pane_list | jq -r --arg p "$target" \
+      ws="$(pane_list 2>/dev/null | jq -r --arg p "$target" \
         '.result.panes // [] | (map(select(.cwd == $p and .focused)) | .[0].workspace_id) // (map(select(.cwd == $p)) | .[0].workspace_id) // empty')"
       if [[ -n $ws ]]; then
-        "$HERDR" workspace focus "$ws" >/dev/null \
+        "$HERDR" workspace focus "$ws" >/dev/null 2>&1 \
           || { echo "sesh-bro: failed to focus workspace $ws" >&2; return 1; }
       else
+        if [[ ! -d $target ]]; then
+          echo "sesh-bro: not a directory: $target" >&2
+          return 1
+        fi
         if command -v zoxide >/dev/null 2>&1; then
           zoxide add "$target" 2>/dev/null || true
         fi
         local label="${target##*/}"; [[ -z $label ]] && label="$target"
-        "$HERDR" workspace create --cwd "$target" --label "$label" --focus >/dev/null \
+        "$HERDR" workspace create --cwd "$target" --label "$label" --focus >/dev/null 2>&1 \
           || { echo "sesh-bro: failed to create workspace for $target" >&2; return 1; }
       fi
       ;;
@@ -310,7 +324,15 @@ cmd_connect() {
 cmd_create() {
   local path="${1:-}"
   if [[ -z $path ]]; then
-    read -r -p "Path: " -e -i "$PWD" path </dev/tty 2>/dev/null || path="$PWD"
+    # Prefer the invoking pane's cwd (Herdr injects HERDR_PLUGIN_CONTEXT_JSON
+    # into popup/action commands); prompt only in a plain interactive shell.
+    if [[ -n ${HERDR_PLUGIN_CONTEXT_JSON:-} ]]; then
+      path="$(printf '%s' "$HERDR_PLUGIN_CONTEXT_JSON" | jq -r '.focused_pane_cwd // .workspace_cwd // empty' 2>/dev/null | head -1)"
+    fi
+    if [[ -z $path && -t 0 ]]; then
+      read -r -p "Path: " -e -i "$PWD" path 2>/dev/null || path="$PWD"
+    fi
+    [[ -z $path ]] && path="$PWD"
   fi
   [[ -z $path ]] && { echo "sesh-bro create: no path" >&2; exit 1; }
   # Expand ~ and ~user.
@@ -340,7 +362,7 @@ cmd_last() {
   prev="$("$HERDR" workspace list | jq -r --arg cur "$current" '
     .result.workspaces // []
     | map(select(.workspace_id != $cur))
-    | sort_by(.focused | not, -.number) | .[0].workspace_id // empty')"
+    | sort_by((.focused | not), (-(.number // 0))) | .[0].workspace_id // empty')"
   [[ -n $prev ]] || { echo "sesh-bro: no previous workspace" >&2; exit 1; }
   "$HERDR" workspace focus "$prev" >/dev/null
 }
@@ -420,7 +442,11 @@ cmd_preview() {
   case "$type" in
     workspace)
       local ws
-      ws="$("$HERDR" workspace get "$target")"
+      ws="$("$HERDR" workspace get "$target" 2>/dev/null || true)"
+      if [[ -z $ws || $ws == *'"error"'* ]]; then
+        printf '%s◆ %s%s  %s(not found)%s\n' "$(status_color unknown)" "$target" "$C_RESET" "$C_DIM" "$C_RESET"
+        return 0
+      fi
       printf '%s◆ %s%s  %s(%s)%s\n\n' \
         "$(status_color "$(printf '%s' "$ws" | jq -r '.result.workspace.agent_status // "unknown"')")" \
         "$(printf '%s' "$ws" | jq -r '.result.workspace.label // ""')" "$C_RESET" \
@@ -428,32 +454,40 @@ cmd_preview() {
       local pane
       pane="$("$HERDR" pane list --workspace "$target" | jq -r \
         '.result.panes // [] | (map(select(.focused)) | .[0].pane_id) // .[0].pane_id // empty')"
-      [[ -n $pane ]] && "$HERDR" pane read "$pane" --source visible --ansi
+      [[ -n $pane ]] && "$HERDR" pane read "$pane" --source visible --ansi 2>/dev/null
       ;;
     agent)
       local ag
-      ag="$("$HERDR" agent get "$target")"
+      ag="$("$HERDR" agent get "$target" 2>/dev/null || true)"
+      if [[ -z $ag || $ag == *'"error"'* ]]; then
+        printf '%s● %s%s  %s(not found)%s\n' "$(status_color unknown)" "$target" "$C_RESET" "$C_DIM" "$C_RESET"
+        return 0
+      fi
       printf '%s● %s%s  %s%s · %s%s\n\n' \
         "$(status_color "$(printf '%s' "$ag" | jq -r '.result.agent.agent_status // "unknown"')")" \
         "$(printf '%s' "$ag" | jq -r '.result.agent.name // .result.agent.agent // ""')" "$C_RESET" \
         "$C_DIM" \
         "$(printf '%s' "$ag" | jq -r '.result.agent.agent_status // "unknown"')" \
         "$(printf '%s' "$ag" | jq -r '.result.agent.cwd // ""')" "$C_RESET"
-      "$HERDR" agent read "$target" --source visible --ansi
+      "$HERDR" agent read "$target" --source visible --ansi 2>/dev/null
       ;;
     dir)
       printf '\033[36m▸ %s%s\n\n' "$target" "$C_RESET"
+      if [[ ! -d $target ]]; then
+        printf '%s(directory not found)%s\n' "$C_DIM" "$C_RESET"
+        return 0
+      fi
       if command -v eza >/dev/null 2>&1; then
-        eza -la --color=always --group-directories-first --no-user --time-style=relative "$target"
+        eza -la --color=always --group-directories-first --no-user --time-style=relative "$target" 2>/dev/null
       else
-        ls -la "$target"
+        ls -la "$target" 2>/dev/null
       fi
       local readme
       readme="$(find "$target" -maxdepth 1 -iname 'readme*' -type f 2>/dev/null | head -1)"
       if [[ -n $readme ]]; then
         printf '\n%s── %s ──%s\n\n' "$C_DIM" "$(basename "$readme")" "$C_RESET"
         if command -v bat >/dev/null 2>&1; then
-          bat --color=always --style=plain --paging=never --line-range :40 "$readme"
+          bat --color=always --style=plain --paging=never --line-range :40 "$readme" 2>/dev/null
         else
           sed -n '1,40p' "$readme"
         fi
@@ -485,19 +519,18 @@ cmd_picker() {
   require_herdr || exit 1
   command -v fzf >/dev/null 2>&1 || { echo "sesh-bro: fzf is required" >&2; exit 1; }
 
-  # Alias map: SESH_BRO_ALIASES="alias=label:alias2=label2". Typing an exact
-  # alias jumps straight to that entry (fzf selects it as the query).
+  # Alias map: SESH_BRO_ALIASES="alias=label:alias2=label2". A single alias
+  # prefills the query so its target floats to the top; with several, don't
+  # prefill (a multi-term query would OR-match unrelated rows) — the user just
+  # types their alias and fzf ranks the exact label match first.
   local alias_query=""
   if [[ -n $CFG_ALIASES ]]; then
-    local pair
+    local pair pairs=()
     IFS=':' read -r -a pairs <<< "$CFG_ALIASES"
-    for pair in "${pairs[@]+"${pairs[@]}"}"; do
-      local a="${pair%%=*}" l="${pair#*=}"
-      if [[ -n $a && -n $l ]]; then
-        # Leave the alias as a query; exact match ranks first in fzf.
-        alias_query="$a $alias_query"
-      fi
-    done
+    if [[ ${#pairs[@]} -eq 1 ]]; then
+      pair="${pairs[0]}"
+      alias_query="${pair%%=*}"
+    fi
   fi
 
   local preview_opt=()
@@ -505,6 +538,10 @@ cmd_picker() {
   # bare {2} keeps targets with spaces (e.g. "Mobile Documents") as one
   # argument — no extra quoting here, which would double-escape it.
   [[ $CFG_PREVIEW_ENABLED -eq 1 ]] && preview_opt=("--preview=$SELF_Q preview {1} {2}")
+
+  # Guard against a malformed preview-width config breaking the fzf arg.
+  local pw="$CFG_PREVIEW_WIDTH"
+  [[ $pw =~ ^[0-9]+%?$ ]] || pw="60%"
 
   local selection
   selection="$("$SELF" list "${picker_args[@]+"${picker_args[@]}"}" | fzf \
@@ -517,13 +554,13 @@ cmd_picker() {
     --prompt='sesh> ' \
     --header='enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all · ^/ create' \
     "${preview_opt[@]+"${preview_opt[@]}"}" \
-    --preview-window="right,$CFG_PREVIEW_WIDTH,border-left" \
+    --preview-window="right,$pw,border-left" \
     --bind="ctrl-w:reload($SELF_Q list --workspaces $hide_flag)" \
     --bind="ctrl-e:reload($SELF_Q list --agents $hide_flag)" \
     --bind="ctrl-b:reload($SELF_Q list --blocked $hide_flag)" \
     --bind="ctrl-x:reload($SELF_Q list --dirs $hide_flag)" \
     --bind="ctrl-o:reload($SELF_Q list $hide_flag)" \
-    --bind="ctrl-/:execute($SELF_Q create)+reload($SELF_Q list $hide_flag)" \
+    --bind="ctrl-/:execute-silent($SELF_Q create)+reload($SELF_Q list $hide_flag)" \
   )" || true
 
   [[ -z $selection ]] && exit 0

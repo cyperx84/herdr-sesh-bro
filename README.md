@@ -47,7 +47,7 @@ enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all �
 
 ## Requirements
 
-- [Herdr](https://herdr.io) (>= 0.7.4)
+- [Herdr](https://herdr.io) (>= 0.8.0)
 - [fzf](https://github.com/junegunn/fzf)
 - [jq](https://jqlang.github.io/jq/)
 - [zoxide](https://github.com/ajeetdsouza/zoxide) (for directory entries)

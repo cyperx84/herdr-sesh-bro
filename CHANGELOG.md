@@ -32,8 +32,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Git branch enrichment: parse `## branch...upstream` correctly and batch to
   one `git status --porcelain --branch` per distinct workspace cwd with
   `--no-optional-locks`
+- `create` no longer errors on a missing tty (popup/^/ context): falls back to
+  the invoking pane's cwd from `HERDR_PLUGIN_CONTEXT_JSON`, then `$PWD`;
+  `^/` uses `execute-silent` so the picker stays open after creating
+- `connect`/`preview` no longer leak raw herdr error JSON; missing
+  workspaces/agents/dirs render a friendly "(not found)" and connect failures
+  exit non-zero with a clean message
+- `connect dir` rejects non-directory targets
+- `SELF` resolves through symlinks, so PATH/symlinked installs (`herdr plugin
+  install`) find the manifest and version correctly
+- `last` fixed (jq `-(.number)` parens) and `root`/`create` exit codes propagate
+- Alias prefill only applies with a single alias (multi-alias OR-match removed)
+- Malformed `SESH_BRO_PREVIEW_WIDTH` falls back to `60%`
 
 ### Changed
+- `min_herdr_version` bumped to `0.8.0` (all used APIs verified against it)
 - Version single-sourced from the manifest
 - Cache defaults to per-user temp path
 

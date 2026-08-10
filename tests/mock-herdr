@@ -5,7 +5,9 @@
 set -euo pipefail
 
 LOG="${HERDR_MOCK_LOG:-}"
-log() { [[ -n $LOG ]] && printf '%s\n' "$*" >>"$LOG"; }
+# `return 0` so an unset log (a bare `create`/`focus` call) never makes the
+# mock exit non-zero under `set -e`.
+log() { [[ -n $LOG ]] && printf '%s\n' "$*" >>"$LOG"; return 0; }
 
 workspace_obj() {
   case "$1" in

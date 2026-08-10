@@ -1,7 +1,7 @@
 id = "sesh-bro"
 name = "Sesh Bro"
 version = "0.2.0"
-min_herdr_version = "0.7.4"
+min_herdr_version = "0.8.0"
 description = "sesh-style fuzzy picker for Herdr — workspaces, agents, and zoxide dirs with live pane previews"
 platforms = ["linux", "macos"]
 repository = "https://github.com/cyperx84/herdr-sesh-bro"

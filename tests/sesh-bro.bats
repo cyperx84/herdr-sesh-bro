@@ -263,3 +263,29 @@ EOF
   [ "$status" -eq 0 ]
   printf '%s\n' "$output" | grep -Fq "▸ $spaced" || fail "preview did not receive the spaced path as one arg"
 }
+
+@test "connect dir rejects a file target" {
+  run "$SESH_BRO" connect dir /etc/hosts
+  [ "$status" -ne 0 ]
+  printf '%s\n' "$output" | grep -iFq 'not a directory' || fail "expected not-a-directory error"
+}
+
+@test "create with no tty falls back to a path without erroring" {
+  # No stdin tty, no HERDR_PLUGIN_CONTEXT_JSON → falls back to $PWD.
+  run bash -c "cd '$TESTDIR' && '$SESH_BRO' create </dev/null"
+  [ "$status" -eq 0 ]
+  # bash normalizes $PWD (no trailing //), so compare against that.
+  local norm
+  norm="$(cd "$TESTDIR" && pwd)"
+  grep -Fq "create workspace cwd=$norm label=" "$HERDR_MOCK_LOG" || fail "create did not use cwd fallback"
+}
+
+@test "version resolves through a symlink" {
+  local link
+  link="$(mktemp "${TMPDIR:-/tmp}/sesh-bro-link.XXXXXX")"
+  ln -sf "$SESH_BRO" "$link"
+  run "$link" --version
+  rm -f "$link"
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -Fq 'sesh-bro 0.2.0' || fail "symlink version mismatch: $output"
+}
