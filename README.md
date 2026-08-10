@@ -176,7 +176,13 @@ extracts `owner/repo` and the number, resolves the title via `gh` (cached for
 24h), and:
 
 - focuses the existing workspace if one already matches that issue, or
-- creates one named `409 — Add git worktree support…` and focuses it.
+- creates a workspace named `409 — Add git worktree support…` (under
+  `~/github/<repo>`, or `$HOME`) and focuses it.
+
+> **Note:** "worktree" here means an *issue workspace* — a plain Herdr
+> workspace labelled after the issue — not a `git worktree` on disk. If you
+> want a real `git worktree`, create one yourself (`git worktree add`) and the
+> workspace will attach to it on connect.
 
 The link handler pattern is `^https://github\.com/[^/]+/[^/]+/(issues|pull)/[0-9]+$`.
 You can also run it manually: `sesh-bro worktree https://github.com/.../issues/409`.

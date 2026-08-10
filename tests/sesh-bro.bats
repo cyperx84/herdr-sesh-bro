@@ -253,3 +253,13 @@ EOF
   # Icon is wrapped in ANSI color codes: <color>W<reset>
   printf '%s\n' "$output" | grep -Fq "W$(printf '\033[0m')" || fail "custom icon missing"
 }
+
+@test "preview target with spaces survives fzf-style expansion" {
+  # fzf single-quotes {n} field placeholders (man fzf), so a target with
+  # spaces becomes `preview dir '/path with spaces'` — one argument. Simulate
+  # that exact expansion and confirm the preview receives the full path.
+  local spaced="$TESTDIR/proj alpha"
+  run bash -c "'$SESH_BRO' preview dir '$spaced'"
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -Fq "▸ $spaced" || fail "preview did not receive the spaced path as one arg"
+}

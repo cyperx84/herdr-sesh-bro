@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - macOS CI job, expanded mock + bats coverage, release workflow
 - README overhaul: demo, install via GitHub, config/keybind tables, troubleshooting, FAQ
 
+### Fixed
+- Preview of targets with spaces (e.g. `~/Library/Mobile Documents/...`) —
+  fzf single-quotes `{n}` placeholders, so the preview bind now uses a bare
+  `{2}` instead of double-quoting it (which broke the path)
+- Git branch enrichment: parse `## branch...upstream` correctly and batch to
+  one `git status --porcelain --branch` per distinct workspace cwd with
+  `--no-optional-locks`
+
 ### Changed
 - Version single-sourced from the manifest
 - Cache defaults to per-user temp path

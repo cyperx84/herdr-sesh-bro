@@ -219,23 +219,33 @@ cmd_list() {
   fi
   raw="${raw%$'\n'}"
 
-  # sesh-style git enrichment: for workspace rows, look up the workspace's
-  # cwd from the pane list and append branch + dirty state (clean green,
-  # dirty yellow). Cheap: one git call per distinct cwd.
+  # sesh-style git enrichment: one `git status --porcelain --branch` per
+  # DISTINCT workspace cwd (gives branch + dirty in a single call), cached in
+  # a lookup map. --no-optional-locks avoids contention with editors.
   if [[ $as_json -eq 0 ]] && [[ -n $raw ]] && command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
     local ws_cwd
     ws_cwd="$(pane_list 2>/dev/null | jq -r '.result.panes // [] | group_by(.workspace_id) | map({ws: .[0].workspace_id, cwd: .[0].cwd}) | map("\(.ws)\t\(.cwd)") | .[]' 2>/dev/null || true)"
-    local enriched=""
+    local enriched="" gitmap="" w targetcwd out
+    while IFS=$'\t' read -r w targetcwd; do
+      [[ -z $w || -z $targetcwd ]] && continue
+      out="$(git -C "$targetcwd" --no-optional-locks status --porcelain --branch 2>/dev/null | head -1 || true)"
+      # Format: "## main...origin/main" for a clean branch; capture the branch
+      # name (everything up to the first "...").
+      local branch
+      branch="$(printf '%s\n' "$out" | sed -n 's/^## \([^.]*\).*/\1/p' | head -1)"
+      local dirty=""
+      git -C "$targetcwd" --no-optional-locks status --porcelain 2>/dev/null | grep -q . && dirty="*"
+      [[ -n $branch ]] && gitmap+="$w"$'\t'"$branch$dirty"$'\n'
+    done <<< "$ws_cwd"
+
     local type target status label detail gitline
     while IFS=$'\t' read -r type target status label detail; do
       [[ -z ${type:-} ]] && continue
       case "$type" in
         workspace)
-          gitline="$(printf '%s\n' "$ws_cwd" | awk -F'\t' -v w="$target" '$1==w{print $2; exit}' | xargs -I{} git -C {} branch --show-current 2>/dev/null || true)"
+          gitline="$(printf '%s\n' "$gitmap" | awk -F'\t' -v w="$target" '$1==w{print $2; exit}')"
           if [[ -n $gitline ]]; then
-            local dirty=""
-            printf '%s\n' "$ws_cwd" | awk -F'\t' -v w="$target" '$1==w{print $2; exit}' | xargs -I{} git -C {} status --porcelain 2>/dev/null | grep -q . && dirty="*"
-            detail="$detail ${C_DIM}[${C_RESET}${gitline}${dirty}${C_DIM}]${C_RESET}"
+            detail="$detail ${C_DIM}[${C_RESET}${gitline}${C_DIM}]${C_RESET}"
           fi
           ;;
       esac
@@ -491,6 +501,9 @@ cmd_picker() {
   fi
 
   local preview_opt=()
+  # fzf single-quotes {n} field placeholders itself (see `man fzf`), so a
+  # bare {2} keeps targets with spaces (e.g. "Mobile Documents") as one
+  # argument — no extra quoting here, which would double-escape it.
   [[ $CFG_PREVIEW_ENABLED -eq 1 ]] && preview_opt=("--preview=$SELF_Q preview {1} {2}")
 
   local selection
