@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Sesh Bro",
+  "description": "Configuration for the sesh-bro Herdr plugin (SESH_BRO_* environment variables)",
+  "type": "object",
+  "properties": {
+    "preview_width": { "type": "string", "default": "60%", "description": "Preview pane width" },
+    "preview_enabled": { "type": "boolean", "default": true, "description": "Set false to disable the preview pane" },
+    "hide_current": { "type": "boolean", "default": false, "description": "Hide the current workspace and its agents from the list" },
+    "dir_sources": { "type": "boolean", "default": true, "description": "Include zoxide directory entries" },
+    "cache_ttl": { "type": "integer", "default": 2, "description": "Pane-list cache TTL in minutes" },
+    "default_filter": {
+      "type": "string",
+      "default": "all",
+      "enum": ["all", "workspaces", "agents", "dirs", "blocked"],
+      "description": "Default source filter when none is passed"
+    },
+    "blacklist": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Colon-separated globs of directory paths to exclude"
+    },
+    "sort_order": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["workspaces", "agents", "dirs"] },
+      "description": "Order of source blocks in the list"
+    },
+    "icon_workspace": { "type": "string", "default": "◆" },
+    "icon_agent": { "type": "string", "default": "●" },
+    "icon_dir": { "type": "string", "default": "▸" },
+    "aliases": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[^=]+=[^=]+$" },
+      "description": "Alias=label pairs that prefill the picker query"
+    }
+  }
+}
