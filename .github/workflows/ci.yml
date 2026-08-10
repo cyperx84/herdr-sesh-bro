@@ -6,13 +6,20 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - name: Install shellcheck and bats
         run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck bats
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y shellcheck bats
+          else
+            brew install shellcheck bats-core
+          fi
       - name: Lint
         run: make lint
       - name: Test

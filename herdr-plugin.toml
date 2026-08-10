@@ -1,9 +1,35 @@
 id = "sesh-bro"
 name = "Sesh Bro"
-version = "0.1.0"
+version = "0.2.0"
 min_herdr_version = "0.7.4"
 description = "sesh-style fuzzy picker for Herdr — workspaces, agents, and zoxide dirs with live pane previews"
 platforms = ["linux", "macos"]
+repository = "https://github.com/cyperx84/herdr-sesh-bro"
+license = "MIT"
+authors = ["cyperx"]
+
+# Startup: validate dependencies and clear the stale pane cache once per
+# server start. A startup failure is logged but does not stop the server.
+[[startup]]
+command = ["bash", "sesh-bro", "startup"]
+
+# User-configurable settings, exposed through Herdr's config UI. Each maps to
+# a SESH_BRO_* env var the script reads; defaults live in [default_config].
+[config]
+preview_width = { type = "string", default = "60%" }
+preview_enabled = { type = "boolean", default = true }
+hide_current = { type = "boolean", default = false }
+dir_sources = { type = "boolean", default = true }
+cache_ttl = { type = "integer", default = 2 }
+default_filter = { type = "string", default = "all" }
+
+[default_config]
+preview_width = "60%"
+preview_enabled = true
+hide_current = false
+dir_sources = true
+cache_ttl = 2
+default_filter = "all"
 
 [[panes]]
 id = "picker"
@@ -30,3 +56,18 @@ id = "blocked"
 title = "Open sesh-bro picker (blocked agents)"
 contexts = ["workspace"]
 command = ["bash", "sesh-bro", "open", "--blocked"]
+
+# Invoked by the github-worktree link handler; also runnable from the palette.
+[[actions]]
+id = "worktree"
+title = "Open GitHub issue/PR worktree"
+contexts = ["workspace"]
+command = ["bash", "sesh-bro", "worktree"]
+
+# Ctrl-click a GitHub issue/PR URL in any pane: create or focus the worktree
+# workspace for that issue. Parses HERDR_PLUGIN_CLICKED_URL in the command.
+[[link_handlers]]
+id = "github-worktree"
+title = "Open GitHub issue/PR worktree in Herdr"
+pattern = "^https://github\\.com/[^/]+/[^/]+/(issues|pull)/[0-9]+$"
+action = "worktree"

@@ -99,8 +99,27 @@ main() {
       esac
       ;;
     plugin)
-      printf 'mock-herdr: plugin not needed by tests\n' >&2
-      exit 1
+      local psub="${1:-}"
+      shift || true
+      case "$psub" in
+        pane)
+          local op="${1:-}"
+          shift || true
+          case "$op" in
+            open)
+              # If MOCK_POPUP_OPEN is non-empty, the popup is "already open".
+              if [[ -n ${MOCK_POPUP_OPEN:-} ]]; then
+                printf '{"error":{"code":"plugin_pane_open_failed","message":"popup already open"}}\n'
+                exit 1
+              fi
+              log "plugin pane open $*"
+              printf '{"id":"cli:plugin","result":{"type":"ok"}}\n'
+              ;;
+            *) printf 'mock-herdr: unknown plugin pane op %s\n' "$op" >&2; exit 1 ;;
+          esac
+          ;;
+        *) printf 'mock-herdr: unknown plugin subcommand %s\n' "$psub" >&2; exit 1 ;;
+      esac
       ;;
     *) printf 'mock-herdr: unknown command %s\n' "$cmd" >&2; exit 1 ;;
   esac

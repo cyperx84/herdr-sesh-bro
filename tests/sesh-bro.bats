@@ -179,3 +179,77 @@ teardown() {
   [ "$status" -eq 1 ]
   printf '%s\n' "$output" | grep -Fq 'fzf is required' || fail "expected fzf-required error"
 }
+
+@test "version reads from the manifest (single source of truth)" {
+  run "$SESH_BRO" --version
+  [ "$status" -eq 0 ]
+  manifest_ver="$(grep -E '^version = ' "$BATS_TEST_DIRNAME/../herdr-plugin.toml" | head -1 | sed -E 's/version = "(.*)"/\1/')"
+  printf '%s\n' "$output" | grep -Fq "sesh-bro $manifest_ver" || fail "version mismatch: $output"
+}
+
+@test "startup validates deps and clears the cache" {
+  run "$SESH_BRO" startup
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" | grep -Fq 'deps ok' || fail "startup did not report deps ok"
+}
+
+@test "list fails loudly when herdr binary is missing" {
+  run env HERDR_BIN_PATH=/nonexistent/herdr "$SESH_BRO" list
+  [ "$status" -ne 0 ]
+  printf '%s\n' "$output" | grep -iFq 'herdr' || fail "expected herdr error message"
+}
+
+@test "list fails loudly when herdr daemon is down" {
+  # A mock that errors on workspace list simulates a dead daemon.
+  cat > "$BATS_TEST_TMPDIR/broken-herdr" <<'EOF'
+#!/usr/bin/env bash
+echo '{"error":{"code":"daemon_down"}}' >&2
+exit 1
+EOF
+  chmod +x "$BATS_TEST_TMPDIR/broken-herdr"
+  run env HERDR_BIN_PATH="$BATS_TEST_TMPDIR/broken-herdr" "$SESH_BRO" list
+  [ "$status" -ne 0 ]
+}
+
+@test "open invokes the plugin pane open API" {
+  run env MOCK_POPUP_OPEN= "$SESH_BRO" open --agents
+  [ "$status" -eq 0 ]
+  grep -Fq 'plugin pane open --plugin sesh-bro --entrypoint picker --env SESH_BRO_ARGS=--agents' "$HERDR_MOCK_LOG" \
+    || fail "open did not forward the right args"
+}
+
+@test "open rejects unknown flags" {
+  run "$SESH_BRO" open --bogus
+  [ "$status" -eq 2 ]
+}
+
+@test "worktree creates a workspace from a GitHub URL" {
+  run env HERDR_PLUGIN_CLICKED_URL="https://github.com/joshmedeski/sesh/issues/409" "$SESH_BRO" worktree
+  [ "$status" -eq 0 ]
+  grep -Fq 'create workspace' "$HERDR_MOCK_LOG" || fail "worktree did not create a workspace"
+}
+
+@test "worktree rejects a malformed URL" {
+  run "$SESH_BRO" worktree "not-a-url"
+  [ "$status" -ne 0 ]
+}
+
+@test "sort order config reorders source blocks" {
+  run env SESH_BRO_SORT_ORDER="agents,workspaces" "$SESH_BRO" list --json
+  [ "$status" -eq 0 ]
+  types="$(printf '%s\n' "$output" | jq -r '.type' | head -1)"
+  [ "$types" = 'agent' ] || fail "agents should sort first, got: $types"
+}
+
+@test "blacklist filters dirs" {
+  run env SESH_BRO_BLACKLIST="/work/*" "$SESH_BRO" list --dirs
+  [ "$status" -eq 0 ]
+  ! printf '%s\n' "$output" | grep -Fq '/work/other' || fail "blacklisted dir should be hidden"
+}
+
+@test "icon config overrides glyphs" {
+  run env SESH_BRO_ICON_WORKSPACE="W" "$SESH_BRO" list --workspaces
+  [ "$status" -eq 0 ]
+  # Icon is wrapped in ANSI color codes: <color>W<reset>
+  printf '%s\n' "$output" | grep -Fq "W$(printf '\033[0m')" || fail "custom icon missing"
+}

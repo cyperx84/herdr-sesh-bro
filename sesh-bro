@@ -4,13 +4,38 @@
 set -euo pipefail
 
 HERDR="${HERDR_BIN_PATH:-herdr}"
-VERSION="0.1.0"
+
+# Single source of truth for the version is the manifest; the script reads it
+# at startup so the two can never drift. Fall back for direct ./sesh-bro runs.
+VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$(dirname "$0")/herdr-plugin.toml" 2>/dev/null | head -1)"
+VERSION="${VERSION:-0.1.0}"
 
 if [[ -f $0 ]]; then
   SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 else
   SELF="$(command -v sesh-bro)"
 fi
+
+# Path-safe form of SELF for embedding inside fzf --preview/--bind strings:
+# single-quote it (doubling any embedded single quotes) so plugin dirs with
+# spaces or quotes don't break the picker.
+SELF_Q="'${SELF//\'/\'\\\'\'}'"
+
+# ---------------------------------------------------------------- config ----
+# User config flows in as SESH_BRO_* env vars (set by Herdr's [config]/[default_config]
+# or by the user's shell). Each has a built-in default here.
+CFG_PREVIEW_WIDTH="${SESH_BRO_PREVIEW_WIDTH:-60%}"
+CFG_PREVIEW_ENABLED="${SESH_BRO_PREVIEW_ENABLED:-1}"
+CFG_HIDE_CURRENT="${SESH_BRO_HIDE_CURRENT:-0}"
+CFG_DIR_SOURCES="${SESH_BRO_DIR_SOURCES:-1}"
+CFG_CACHE_TTL="${SESH_BRO_CACHE_TTL:-2}"
+CFG_DEFAULT_FILTER="${SESH_BRO_DEFAULT_FILTER:-all}"
+CFG_BLACKLIST="${SESH_BRO_BLACKLIST:-}"
+CFG_SORT_ORDER="${SESH_BRO_SORT_ORDER:-}"
+CFG_ICON_WORKSPACE="${SESH_BRO_ICON_WORKSPACE:-◆}"
+CFG_ICON_AGENT="${SESH_BRO_ICON_AGENT:-●}"
+CFG_ICON_DIR="${SESH_BRO_ICON_DIR:-▸}"
+CFG_ALIASES="${SESH_BRO_ALIASES:-}"
 
 # ---------------------------------------------------------------- colors ----
 C_RESET=$'\033[0m'
@@ -35,19 +60,60 @@ current_workspace_id() {
   fi
 }
 
+# ------------------------------------------------------------- deps/daemon ----
+# Called by picker/list/startup. Fails fast with a clear message instead of
+# silently producing an empty picker when herdr/jq are missing.
+require_herdr() {
+  command -v "$HERDR" >/dev/null 2>&1 || {
+    echo "sesh-bro: herdr binary not found (HERDR_BIN_PATH=$HERDR)" >&2
+    return 1
+  }
+}
+
+require_jq() {
+  command -v jq >/dev/null 2>&1 || {
+    echo "sesh-bro: jq is required (install with your package manager)" >&2
+    return 1
+  }
+}
+
+# Verify the herdr daemon responds; the error message surfaces instead of an
+# empty list when the server is down.
+herdr_ok() {
+  "$HERDR" workspace list >/dev/null 2>&1
+}
+
+check_deps() {
+  require_herdr || return 1
+  require_jq || return 1
+  herdr_ok || {
+    echo "sesh-bro: herdr daemon is not responding (is 'herdr' running?)" >&2
+    return 1
+  }
+}
+
 # ---------------------------------------------------------------- cache ----
 # `herdr pane list` is polled on every list/connect; cache it briefly so rapid
-# reload keypresses don't re-query the daemon each time.
+# reload keypresses don't re-query the daemon each time. Per-user path avoids
+# cross-user collisions on shared machines.
 pane_list() {
-  local cache="${SESH_BRO_PANE_CACHE:-${TMPDIR:-/tmp}/sesh-bro-panes.json}"
-  if [[ -s $cache ]] && find "$cache" -mmin -2 2>/dev/null | grep -q .; then
+  local cache="${SESH_BRO_PANE_CACHE:-${TMPDIR:-/tmp}/sesh-bro-${UID:-$(id -u)}-panes.json}"
+  if [[ -s $cache ]] && find "$cache" -mmin "$CFG_CACHE_TTL" 2>/dev/null | grep -q .; then
     cat "$cache"
     return
   fi
   local out
-  out="$("$HERDR" pane list)"
+  out="$("$HERDR" pane list)" || { echo "sesh-bro: herdr pane list failed" >&2; return 1; }
   printf '%s\n' "$out" >"$cache"
   printf '%s\n' "$out"
+}
+
+# Startup hook (declared in the manifest): validate deps and clear any stale
+# pane cache left by a previous session.
+cmd_startup() {
+  check_deps || exit 1
+  rm -f "${SESH_BRO_PANE_CACHE:-${TMPDIR:-/tmp}/sesh-bro-${UID:-$(id -u)}-panes.json}" 2>/dev/null || true
+  echo "sesh-bro: deps ok"
 }
 
 # ------------------------------------------------------------------ list ----
@@ -70,59 +136,112 @@ cmd_list() {
   [[ $source_flag -eq 0 ]] && { want_ws=1; want_ag=1; want_dir=1; }
   statuses="${statuses# }"
 
+  # Fail loudly instead of rendering an empty picker when deps are broken.
+  require_herdr || exit 1
+  require_jq || exit 1
+  herdr_ok || { echo "sesh-bro: herdr daemon is not responding" >&2; exit 1; }
+
   # Always resolve the current workspace: it sorts first, and is filtered out
-  # only when --hide-current is given.
+  # only when --hide-current is given (or the config default hides it).
   local current="" hide_val=""
   current="$(current_workspace_id)"
-  [[ $hide_current -eq 1 ]] && hide_val="$current"
+  [[ $hide_current -eq 1 || $CFG_HIDE_CURRENT -eq 1 ]] && hide_val="$current"
 
-  local raw=""
-  if [[ $want_ws -eq 1 || $want_ag -eq 1 ]]; then
-    if [[ $want_ws -eq 1 ]]; then
-      raw+="$("$HERDR" workspace list | jq -r --arg cur "$current" --arg hide "$hide_val" '
-        .result.workspaces // []
-        | map(select($hide == "" or .workspace_id != $hide))
-        | map(.priority = (if $cur != "" and .workspace_id == $cur then 0 else 1 end))
-        | sort_by(.priority, .number)
-        | .[]
-        | ["workspace", .workspace_id, (.agent_status // "unknown"),
-           (.label // .workspace_id),
-           ((.pane_count | tostring) + "p/" + (.tab_count | tostring) + "t"
-            + (if .focused then " · current" else "" end))]
-        | @tsv')"
-    fi
-    if [[ $want_ag -eq 1 ]]; then
-      local ag
-      ag="$("$HERDR" agent list | jq -r --arg cur "$current" --arg hide "$hide_val" --arg st "$statuses" '
-        def rank: {blocked: 0, working: 1, done: 2, idle: 3}[.] // 4;
-        .result.agents // []
-        | map(.agent_status = (.agent_status // "unknown"))
-        | map(select($hide == "" or .workspace_id != $hide))
-        | map(. as $agent | select($st == "" or ((" " + $st + " ") | test(" " + $agent.agent_status + " "))))
-        | map(.priority = (if $cur != "" and .workspace_id == $cur then 0 else 1 end))
-        | sort_by(.priority, (.agent_status | rank), (.name // ""))
-        | .[]
-        | ["agent", (.name // .pane_id), .agent_status,
-           (.name // .agent // .pane_id),
-           ((.agent // "?") + " · " + (.terminal_title_stripped // .cwd // ""))]
-        | @tsv')"
-      [[ -n $ag ]] && raw+=$'\n'"$ag"
-    fi
+  local raw="" ws_block="" ag_block="" dir_block=""
+  if [[ $want_ws -eq 1 ]]; then
+    ws_block="$("$HERDR" workspace list | jq -r --arg cur "$current" --arg hide "$hide_val" '
+      .result.workspaces // []
+      | map(select($hide == "" or .workspace_id != $hide))
+      | map(.priority = (if $cur != "" and .workspace_id == $cur then 0 else 1 end))
+      | sort_by(.priority, .number)
+      | .[]
+      | ["workspace", .workspace_id, (.agent_status // "unknown"),
+         (.label // .workspace_id),
+         ((.pane_count | tostring) + "p/" + (.tab_count | tostring) + "t"
+          + (if .focused then " · current" else "" end))]
+      | @tsv')"
   fi
-  if [[ $want_dir -eq 1 ]] && command -v zoxide >/dev/null 2>&1; then
+  if [[ $want_ag -eq 1 ]]; then
+    ag_block="$("$HERDR" agent list | jq -r --arg cur "$current" --arg hide "$hide_val" --arg st "$statuses" '
+      def rank: {blocked: 0, working: 1, done: 2, idle: 3}[.] // 4;
+      .result.agents // []
+      | map(.agent_status = (.agent_status // "unknown"))
+      | map(select($hide == "" or .workspace_id != $hide))
+      | map(. as $agent | select($st == "" or ((" " + $st + " ") | test(" " + $agent.agent_status + " "))))
+      | map(.priority = (if $cur != "" and .workspace_id == $cur then 0 else 1 end))
+      | sort_by(.priority, (.agent_status | rank), (.name // ""))
+      | .[]
+      | ["agent", (.name // .pane_id), .agent_status,
+         (.name // .agent // .pane_id),
+         ((.agent // "?") + " · " + (.terminal_title_stripped // .cwd // ""))]
+      | @tsv')"
+  fi
+  if [[ $want_dir -eq 1 ]] && [[ $CFG_DIR_SOURCES -eq 1 ]] && command -v zoxide >/dev/null 2>&1; then
     local known
     known="$(pane_list | jq -r '.result.panes // [] | .[].cwd // empty' | sort -u || true)"
     local dz path base
     dz="$(zoxide query --list 2>/dev/null || true)"
     while IFS= read -r path; do
       [[ -z $path ]] && continue
+      # Apply the blacklist (colon-separated globs) to directory paths.
+      if [[ -n $CFG_BLACKLIST ]]; then
+        local bl
+        for bl in ${CFG_BLACKLIST//:/$'\n'}; do
+          # shellcheck disable=SC2053 # intentional glob matching against paths
+          [[ $path == $bl ]] && continue 2
+        done
+      fi
       if [[ -n $known ]] && printf '%s\n' "$known" | grep -Fxq "$path"; then
         continue
       fi
       base="${path##*/}"; [[ -z $base ]] && base="$path"
-      [[ -n $raw ]] && raw+=$'\n'
-      raw+="dir"$'\t'"$path"$'\t'"-"$'\t'"$base"$'\t'"$path"
+      [[ -n $dir_block ]] && dir_block+=$'\n'
+      dir_block+="dir"$'\t'"$path"$'\t'"-"$'\t'"$base"$'\t'"$path"
     done <<< "$dz"
+  fi
+
+  # Assemble blocks in the configured order. Default: workspaces, agents, dirs
+  # (current-first inside each block). CFG_SORT_ORDER overrides, e.g. "agents,dirs,workspaces".
+  if [[ -n $CFG_SORT_ORDER ]]; then
+    local part
+    IFS=',' read -r -a parts <<< "$CFG_SORT_ORDER"
+    for part in "${parts[@]+"${parts[@]}"}"; do
+      case "$part" in
+        workspaces) [[ -n $ws_block ]] && raw+="${ws_block}"$'\n' ;;
+        agents)     [[ -n $ag_block ]] && raw+="${ag_block}"$'\n' ;;
+        dirs)       [[ -n $dir_block ]] && raw+="${dir_block}"$'\n' ;;
+      esac
+    done
+  else
+    [[ -n $ws_block ]] && raw+="${ws_block}"$'\n'
+    [[ -n $ag_block ]] && raw+="${ag_block}"$'\n'
+    [[ -n $dir_block ]] && raw+="${dir_block}"$'\n'
+  fi
+  raw="${raw%$'\n'}"
+
+  # sesh-style git enrichment: for workspace rows, look up the workspace's
+  # cwd from the pane list and append branch + dirty state (clean green,
+  # dirty yellow). Cheap: one git call per distinct cwd.
+  if [[ $as_json -eq 0 ]] && [[ -n $raw ]] && command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    local ws_cwd
+    ws_cwd="$(pane_list 2>/dev/null | jq -r '.result.panes // [] | group_by(.workspace_id) | map({ws: .[0].workspace_id, cwd: .[0].cwd}) | map("\(.ws)\t\(.cwd)") | .[]' 2>/dev/null || true)"
+    local enriched=""
+    local type target status label detail gitline
+    while IFS=$'\t' read -r type target status label detail; do
+      [[ -z ${type:-} ]] && continue
+      case "$type" in
+        workspace)
+          gitline="$(printf '%s\n' "$ws_cwd" | awk -F'\t' -v w="$target" '$1==w{print $2; exit}' | xargs -I{} git -C {} branch --show-current 2>/dev/null || true)"
+          if [[ -n $gitline ]]; then
+            local dirty=""
+            printf '%s\n' "$ws_cwd" | awk -F'\t' -v w="$target" '$1==w{print $2; exit}' | xargs -I{} git -C {} status --porcelain 2>/dev/null | grep -q . && dirty="*"
+            detail="$detail ${C_DIM}[${C_RESET}${gitline}${dirty}${C_DIM}]${C_RESET}"
+          fi
+          ;;
+      esac
+      enriched+="$type"$'\t'"$target"$'\t'"$status"$'\t'"$label"$'\t'"$detail"$'\n'
+    done <<< "$raw"
+    raw="$enriched"
   fi
 
   if [[ $as_json -eq 1 ]]; then
@@ -136,9 +255,9 @@ cmd_list() {
     [[ -z ${type:-} ]] && continue
     color="$(status_color "$status")"
     case "$type" in
-      workspace) icon="${color}◆${C_RESET}" ;;
-      agent)     icon="${color}●${C_RESET}" ;;
-      dir)       icon="$(status_color dir)▸${C_RESET}" ;;
+      workspace) icon="${color}${CFG_ICON_WORKSPACE}${C_RESET}" ;;
+      agent)     icon="${color}${CFG_ICON_AGENT}${C_RESET}" ;;
+      dir)       icon="$(status_color dir)${CFG_ICON_DIR}${C_RESET}" ;;
     esac
     printf '%s\t%s\t%s %s %s\n' "$type" "$target" "$icon" "$label" "$C_DIM$detail$C_RESET"
   done <<< "$raw"
@@ -149,23 +268,27 @@ cmd_connect() {
   local type="$1" target="$2"
   case "$type" in
     workspace)
-      "$HERDR" workspace focus "$target" >/dev/null
+      "$HERDR" workspace focus "$target" >/dev/null \
+        || { echo "sesh-bro: failed to focus workspace $target" >&2; return 1; }
       ;;
     agent)
-      "$HERDR" agent focus "$target" >/dev/null
+      "$HERDR" agent focus "$target" >/dev/null \
+        || { echo "sesh-bro: failed to focus agent $target" >&2; return 1; }
       ;;
     dir)
       local ws
       ws="$(pane_list | jq -r --arg p "$target" \
-        '.result.panes // [] | map(select(.cwd == $p)) | .[0].workspace_id // empty')"
+        '.result.panes // [] | (map(select(.cwd == $p and .focused)) | .[0].workspace_id) // (map(select(.cwd == $p)) | .[0].workspace_id) // empty')"
       if [[ -n $ws ]]; then
-        "$HERDR" workspace focus "$ws" >/dev/null
+        "$HERDR" workspace focus "$ws" >/dev/null \
+          || { echo "sesh-bro: failed to focus workspace $ws" >&2; return 1; }
       else
         if command -v zoxide >/dev/null 2>&1; then
           zoxide add "$target" 2>/dev/null || true
         fi
         local label="${target##*/}"; [[ -z $label ]] && label="$target"
-        "$HERDR" workspace create --cwd "$target" --label "$label" --focus >/dev/null
+        "$HERDR" workspace create --cwd "$target" --label "$label" --focus >/dev/null \
+          || { echo "sesh-bro: failed to create workspace for $target" >&2; return 1; }
       fi
       ;;
     *) echo "sesh-bro connect: unknown type $type" >&2; exit 2 ;;
@@ -180,13 +303,105 @@ cmd_create() {
     read -r -p "Path: " -e -i "$PWD" path </dev/tty 2>/dev/null || path="$PWD"
   fi
   [[ -z $path ]] && { echo "sesh-bro create: no path" >&2; exit 1; }
-  path="$(printf '%s' "$path" | sed "s|^~|$HOME|")"
+  # Expand ~ and ~user.
+  if [[ $path == \~/* ]]; then
+    path="$HOME/${path#\~/}"
+  elif [[ $path == \~* ]]; then
+    local user="${path%%/*}"; user="${user#\~}"
+    local home
+    home="$(getent passwd "$user" 2>/dev/null | cut -d: -f6)"
+    [[ -z $home ]] && home="$(eval "printf '%s' \"\$$user\"" 2>/dev/null || true)"
+    [[ -n $home ]] && path="$home/${path#*/}"
+  fi
   [[ -d $path ]] || { echo "sesh-bro create: not a directory: $path" >&2; exit 1; }
   if command -v zoxide >/dev/null 2>&1; then
     zoxide add "$path" 2>/dev/null || true
   fi
   local label="${path##*/}"; [[ -z $label ]] && label="$path"
-  "$HERDR" workspace create --cwd "$path" --label "$label" --focus >/dev/null
+  "$HERDR" workspace create --cwd "$path" --label "$label" --focus >/dev/null \
+    || { echo "sesh-bro: failed to create workspace for $path" >&2; exit 1; }
+}
+
+# ------------------------------------------------------------------ last ----
+# Focus the previously-focused workspace (sesh last equivalent).
+cmd_last() {
+  local current prev
+  current="$(current_workspace_id)"
+  prev="$("$HERDR" workspace list | jq -r --arg cur "$current" '
+    .result.workspaces // []
+    | map(select(.workspace_id != $cur))
+    | sort_by(.focused | not, -.number) | .[0].workspace_id // empty')"
+  [[ -n $prev ]] || { echo "sesh-bro: no previous workspace" >&2; exit 1; }
+  "$HERDR" workspace focus "$prev" >/dev/null
+}
+
+# ------------------------------------------------------------------ root ----
+# Focus the git-root workspace for the current cwd (sesh root equivalent).
+cmd_root() {
+  local root
+  root="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+  [[ -n $root ]] || { echo "sesh-bro: not in a git repo" >&2; exit 1; }
+  local ws
+  ws="$(pane_list | jq -r --arg p "$root" \
+    '.result.panes // [] | (map(select(.cwd == $p)) | .[0].workspace_id) // empty')"
+  if [[ -n $ws ]]; then
+    "$HERDR" workspace focus "$ws" >/dev/null
+  else
+    local label="${root##*/}"; [[ -z $label ]] && label="$root"
+    "$HERDR" workspace create --cwd "$root" --label "$label" --focus >/dev/null
+  fi
+}
+
+# ------------------------------------------------------------------ worktree ----
+# Create or focus the workspace for a GitHub issue/PR. Used by the
+# github-worktree link handler (HERDR_PLUGIN_CLICKED_URL) and directly with a
+# URL or "owner/repo#123" argument.
+cmd_worktree() {
+  local url="${HERDR_PLUGIN_CLICKED_URL:-${1:-}}"
+  [[ -n $url ]] || { echo "sesh-bro worktree: no URL (usage: sesh-bro worktree <github-url>)" >&2; exit 1; }
+
+  local owner repo num
+  if [[ $url =~ ^https://github\.com/([^/]+)/([^/]+)/(issues|pull)/([0-9]+) ]]; then
+    owner="${BASH_REMATCH[1]}"; repo="${BASH_REMATCH[2]}"; num="${BASH_REMATCH[4]}"
+  elif [[ $url =~ ^([^/]+)/([^/]+)#([0-9]+) ]]; then
+    owner="${BASH_REMATCH[1]}"; repo="${BASH_REMATCH[2]}"; num="${BASH_REMATCH[3]}"
+  else
+    echo "sesh-bro worktree: unrecognized URL $url" >&2; exit 1
+  fi
+
+  # Resolve the issue/PR title via gh (cached 24h under the state dir).
+  local cache_dir="${HERDR_PLUGIN_STATE_DIR:-${TMPDIR:-/tmp}/sesh-bro-${UID:-$(id -u)}}"
+  mkdir -p "$cache_dir"
+  local cache_file="$cache_dir/gh-title-$owner-$repo-$num"
+  local title=""
+  if [[ -s $cache_file ]] && find "$cache_file" -mmin -1440 2>/dev/null | grep -q .; then
+    title="$(cat "$cache_file")"
+  elif command -v gh >/dev/null 2>&1; then
+    title="$(gh issue view "$num" --repo "$owner/$repo" --json title -q .title 2>/dev/null \
+             || gh pr view "$num" --repo "$owner/$repo" --json title -q .title 2>/dev/null \
+             || true)"
+    [[ -n $title ]] && printf '%s' "$title" >"$cache_file"
+  fi
+
+  # Check for an existing workspace whose label matches the issue number.
+  local existing
+  existing="$("$HERDR" workspace list | jq -r --arg n "$num" '
+    .result.workspaces // [] | map(select(.label | test("(^|[^0-9])" + $n + "([^0-9]|$)"))) | .[0].workspace_id // empty')"
+  if [[ -n $existing ]]; then
+    "$HERDR" workspace focus "$existing" >/dev/null
+    echo "sesh-bro: focused workspace $existing"
+    exit 0
+  fi
+
+  local label="${num}"
+  [[ -n $title ]] && label="$num — $title"
+  local cwd="$HOME"
+  if [[ -d $HOME/github ]]; then
+    cwd="$HOME/github/${repo}"
+  fi
+  "$HERDR" workspace create --cwd "$cwd" --label "$label" --focus >/dev/null \
+    || { echo "sesh-bro: failed to create worktree workspace for $owner/$repo#$num" >&2; exit 1; }
+  echo "sesh-bro: created workspace for $owner/$repo#$num"
 }
 
 # --------------------------------------------------------------- preview ----
@@ -247,8 +462,36 @@ cmd_picker() {
   for arg in "${picker_args[@]+"${picker_args[@]}"}"; do
     [[ $arg == "--hide-current" ]] && hide_flag="--hide-current"
   done
+  # Apply the configured default filter if no source flag was given.
+  if [[ ${#picker_args[@]} -eq 0 ]] && [[ $CFG_DEFAULT_FILTER != "all" ]]; then
+    case "$CFG_DEFAULT_FILTER" in
+      workspaces) picker_args+=(--workspaces) ;;
+      agents)     picker_args+=(--agents) ;;
+      dirs)       picker_args+=(--dirs) ;;
+      blocked)    picker_args+=(--blocked) ;;
+    esac
+  fi
 
+  require_herdr || exit 1
   command -v fzf >/dev/null 2>&1 || { echo "sesh-bro: fzf is required" >&2; exit 1; }
+
+  # Alias map: SESH_BRO_ALIASES="alias=label:alias2=label2". Typing an exact
+  # alias jumps straight to that entry (fzf selects it as the query).
+  local alias_query=""
+  if [[ -n $CFG_ALIASES ]]; then
+    local pair
+    IFS=':' read -r -a pairs <<< "$CFG_ALIASES"
+    for pair in "${pairs[@]+"${pairs[@]}"}"; do
+      local a="${pair%%=*}" l="${pair#*=}"
+      if [[ -n $a && -n $l ]]; then
+        # Leave the alias as a query; exact match ranks first in fzf.
+        alias_query="$a $alias_query"
+      fi
+    done
+  fi
+
+  local preview_opt=()
+  [[ $CFG_PREVIEW_ENABLED -eq 1 ]] && preview_opt=("--preview=$SELF_Q preview {1} {2}")
 
   local selection
   selection="$("$SELF" list "${picker_args[@]+"${picker_args[@]}"}" | fzf \
@@ -257,16 +500,17 @@ cmd_picker() {
     --with-nth='3..' \
     --layout=reverse \
     --tiebreak=index \
+    --query="$alias_query" \
     --prompt='sesh> ' \
     --header='enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all · ^/ create' \
-    --preview="'$SELF' preview {1} {2}" \
-    --preview-window='right,60%,border-left' \
-    --bind="ctrl-w:reload('$SELF' list --workspaces $hide_flag)" \
-    --bind="ctrl-e:reload('$SELF' list --agents $hide_flag)" \
-    --bind="ctrl-b:reload('$SELF' list --blocked $hide_flag)" \
-    --bind="ctrl-x:reload('$SELF' list --dirs $hide_flag)" \
-    --bind="ctrl-o:reload('$SELF' list $hide_flag)" \
-    --bind="ctrl-/:execute('$SELF' create)+reload('$SELF' list $hide_flag)" \
+    "${preview_opt[@]+"${preview_opt[@]}"}" \
+    --preview-window="right,$CFG_PREVIEW_WIDTH,border-left" \
+    --bind="ctrl-w:reload($SELF_Q list --workspaces $hide_flag)" \
+    --bind="ctrl-e:reload($SELF_Q list --agents $hide_flag)" \
+    --bind="ctrl-b:reload($SELF_Q list --blocked $hide_flag)" \
+    --bind="ctrl-x:reload($SELF_Q list --dirs $hide_flag)" \
+    --bind="ctrl-o:reload($SELF_Q list $hide_flag)" \
+    --bind="ctrl-/:execute($SELF_Q create)+reload($SELF_Q list $hide_flag)" \
   )" || true
 
   [[ -z $selection ]] && exit 0
@@ -285,6 +529,14 @@ cmd_picker() {
 # Used by manifest actions: opens the picker pane on the foreground client.
 cmd_open() {
   local plugin_id="${HERDR_PLUGIN_ID:-sesh-bro}"
+  # Validate flags before forwarding so typos surface early, not inside fzf.
+  local a
+  for a in "$@"; do
+    case "$a" in
+      --workspaces|--agents|--dirs|--blocked|--working|--done|--idle|--hide-current) ;;
+      *) echo "sesh-bro open: unknown flag $a" >&2; exit 2 ;;
+    esac
+  done
   if [[ $# -gt 0 ]]; then
     exec "$HERDR" plugin pane open --plugin "$plugin_id" --entrypoint picker \
       --env "SESH_BRO_ARGS=$*"
@@ -308,6 +560,12 @@ commands:
   preview TYPE TARGET
                      render the preview used by the picker
   open   [flags]     open the picker popup through the Herdr plugin API
+  startup            validate deps + clear stale cache (manifest startup hook)
+  last               focus the previously-focused workspace
+  root               focus/create the workspace for the current git root
+  worktree [URL]     create/focus the workspace for a GitHub issue/PR
+  -h, --help         show this help
+  -v, --version      print the version
 
 flags:
   --workspaces       only Herdr workspaces
@@ -319,6 +577,11 @@ flags:
   --idle             only idle agents
   --hide-current     hide the current workspace and its agents
   --json             machine-readable list output
+
+environment:
+  HERDR_BIN_PATH     the herdr binary to use (default: herdr on PATH)
+  SESH_BRO_*         config overrides (preview_width, hide_current, dir_sources,
+                     cache_ttl, default_filter, blacklist, icons, aliases...)
 EOF
 }
 
@@ -332,6 +595,10 @@ main() {
     create)        cmd_create "$@" ;;
     preview)       cmd_preview "$@" ;;
     open)          cmd_open "$@" ;;
+    startup)       cmd_startup "$@" ;;
+    last)          cmd_last "$@" ;;
+    root)          cmd_root "$@" ;;
+    worktree)      cmd_worktree "$@" ;;
     -h|--help|help) usage ;;
     -v|--version)  echo "sesh-bro $VERSION" ;;
     *) echo "sesh-bro: unknown command $cmd" >&2; usage >&2; exit 2 ;;
