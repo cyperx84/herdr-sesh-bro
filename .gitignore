@@ -2,3 +2,8 @@
 .reasonix/
 .DS_Store
 tools/
+
+# Go build output (herdr-plugin.toml's [[build]] produces bin/sesh-bro)
+/bin/
+*.exe
+*.test
