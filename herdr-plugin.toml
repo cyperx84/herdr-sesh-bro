@@ -33,7 +33,7 @@ command = ["sh", "scripts/build.sh"]
 # Startup: validate dependencies and clear the stale pane cache once per
 # server start. A startup failure is logged but does not stop the server.
 [[startup]]
-command = ["bin/sesh-bro", "startup"]
+command = ["./bin/sesh-bro", "startup"]
 
 # User-configurable settings, exposed through Herdr's config UI. Each maps to
 # a SESH_BRO_* env var the binary reads; defaults live in [default_config].
@@ -59,32 +59,32 @@ title = "Sesh Bro"
 placement = "popup"
 width = "80%"
 height = "70%"
-command = ["bin/sesh-bro", "picker"]
+command = ["./bin/sesh-bro", "picker"]
 
 [[actions]]
 id = "open"
 title = "Open sesh-bro picker"
 contexts = ["workspace"]
-command = ["bin/sesh-bro", "open"]
+command = ["./bin/sesh-bro", "open"]
 
 [[actions]]
 id = "agents"
 title = "Open sesh-bro picker (agents only)"
 contexts = ["workspace"]
-command = ["bin/sesh-bro", "open", "--agents"]
+command = ["./bin/sesh-bro", "open", "--agents"]
 
 [[actions]]
 id = "blocked"
 title = "Open sesh-bro picker (blocked agents)"
 contexts = ["workspace"]
-command = ["bin/sesh-bro", "open", "--blocked"]
+command = ["./bin/sesh-bro", "open", "--blocked"]
 
 # Invoked by the github-worktree link handler; also runnable from the palette.
 [[actions]]
 id = "worktree"
 title = "Open GitHub issue/PR worktree"
 contexts = ["workspace"]
-command = ["bin/sesh-bro", "worktree"]
+command = ["./bin/sesh-bro", "worktree"]
 
 # Ctrl-click a GitHub issue/PR URL in any pane: create or focus the worktree
 # workspace for that issue. Parses HERDR_PLUGIN_CLICKED_URL in the command.
