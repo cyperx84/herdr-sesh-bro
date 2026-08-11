@@ -1634,3 +1634,23 @@ sesh-bro: failed to connect to <type> <target>
 Stdout messages: `sesh-bro: deps ok`, `sesh-bro <version>`,
 `sesh-bro: focused workspace <id>`, `sesh-bro: created workspace for <owner>/<repo>#<num>`,
 `no preview`, plus the usage text and all `list`/`preview` output.
+
+
+## Known deviation from the bash: git dirty marker
+
+The Go port shows a `*` dirty marker where the bash script sometimes does not.
+
+Found after the parity audit, by diffing both against a live session: for a
+workspace whose repo had four tracked modifications, the Go build rendered
+`[main*]` and the bash rendered `[main]`. Reproduced consistently across three
+runs, so not a race. Both resolve the same directory, and running the bash's
+own dirty check by hand against that directory reports dirty — the star is lost
+somewhere inside its batched enrichment path.
+
+**The Go behaviour is the correct one and is kept.** This is a deliberate
+deviation from strict parity: reproducing a bug that hides uncommitted work
+would be the wrong call, and a picker that under-reports dirty state is exactly
+the kind of quiet wrong answer this project treats as a defect elsewhere.
+
+Recorded rather than silently fixed, because the rewrite's whole claim is that
+it behaves identically, and this is the one place it knowingly does not.
