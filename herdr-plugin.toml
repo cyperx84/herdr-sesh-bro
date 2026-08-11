@@ -1,20 +1,42 @@
 id = "sesh-bro"
 name = "Sesh Bro"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.8.0"
 description = "sesh-style fuzzy picker for Herdr — workspaces, agents, and zoxide dirs with live pane previews"
+# Windows is deliberately NOT listed, even though fzf and zoxide both ship
+# Windows builds: this plugin's fzf integration (internal/picker) single-
+# quotes its --preview/--bind command strings POSIX-style (BuildArgs'
+# quoteSingle) for the `$SHELL -c` fzf invokes them through on Linux/macOS.
+# On native Windows fzf instead runs bind/preview commands via `cmd /c`
+# unless $SHELL points at a POSIX shell (e.g. Git Bash), so that quoting
+# would be silently wrong — every reload/preview keybinding would break, not
+# just degrade. The picker's failure-prompt keypress
+# (internal/picker.waitForKeypress) also opens /dev/tty directly, which does
+# not exist on Windows. Advertising "windows" here would be a lie about
+# what actually works; it stays off the list until the picker's shell/tty
+# assumptions are addressed as their own deliberate change, not a side
+# effect of this rewrite.
 platforms = ["linux", "macos"]
 repository = "https://github.com/cyperx84/herdr-sesh-bro"
 license = "MIT"
 authors = ["cyperx"]
 
+# Compiled Go plugin: prefer a local toolchain build for an exact source
+# match, fall back to a SHA256-verified prebuilt from GitHub Releases.
+# Pattern adopted from herdr-loop's own [[build]]/scripts/build.sh — see
+# that script's header comment for the full rationale. Runs once, on
+# `plugin install`, after user confirmation.
+[[build]]
+platforms = ["linux", "macos"]
+command = ["sh", "scripts/build.sh"]
+
 # Startup: validate dependencies and clear the stale pane cache once per
 # server start. A startup failure is logged but does not stop the server.
 [[startup]]
-command = ["bash", "sesh-bro", "startup"]
+command = ["./bin/sesh-bro", "startup"]
 
 # User-configurable settings, exposed through Herdr's config UI. Each maps to
-# a SESH_BRO_* env var the script reads; defaults live in [default_config].
+# a SESH_BRO_* env var the binary reads; defaults live in [default_config].
 [config]
 preview_width = { type = "string", default = "60%" }
 preview_enabled = { type = "boolean", default = true }
@@ -37,32 +59,32 @@ title = "Sesh Bro"
 placement = "popup"
 width = "80%"
 height = "70%"
-command = ["bash", "sesh-bro", "picker"]
+command = ["./bin/sesh-bro", "picker"]
 
 [[actions]]
 id = "open"
 title = "Open sesh-bro picker"
 contexts = ["workspace"]
-command = ["bash", "sesh-bro", "open"]
+command = ["./bin/sesh-bro", "open"]
 
 [[actions]]
 id = "agents"
 title = "Open sesh-bro picker (agents only)"
 contexts = ["workspace"]
-command = ["bash", "sesh-bro", "open", "--agents"]
+command = ["./bin/sesh-bro", "open", "--agents"]
 
 [[actions]]
 id = "blocked"
 title = "Open sesh-bro picker (blocked agents)"
 contexts = ["workspace"]
-command = ["bash", "sesh-bro", "open", "--blocked"]
+command = ["./bin/sesh-bro", "open", "--blocked"]
 
 # Invoked by the github-worktree link handler; also runnable from the palette.
 [[actions]]
 id = "worktree"
 title = "Open GitHub issue/PR worktree"
 contexts = ["workspace"]
-command = ["bash", "sesh-bro", "worktree"]
+command = ["./bin/sesh-bro", "worktree"]
 
 # Ctrl-click a GitHub issue/PR URL in any pane: create or focus the worktree
 # workspace for that issue. Parses HERDR_PLUGIN_CLICKED_URL in the command.
