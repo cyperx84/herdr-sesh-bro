@@ -220,6 +220,15 @@ sesh-bro falls back to today's plain workspace (same location, same label)
 rather than failing the command outright — you'll see a one-line note on
 stderr explaining the fallback.
 
+If the guessed location is not actually a checkout of that repo, sesh-bro says
+so and opens a plain workspace instead of creating a worktree there. The guess
+is `~/github/<repo>`, falling back to `$HOME` — and on a machine with no
+`~/github` whose owner has `git init`'d their home directory, that fallback is
+a real repository. Creating a branch and a worktree inside somebody's dotfiles
+because they clicked a link is not a trade worth making, so the checkout is
+verified against the repo's remote (or, with no remote, its directory name)
+before anything is created.
+
 The link handler pattern is `^https://github\.com/[^/]+/[^/]+/(issues|pull)/[0-9]+$`.
 You can also run it manually: `sesh-bro worktree https://github.com/.../issues/409`.
 

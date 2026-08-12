@@ -40,6 +40,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -183,7 +184,32 @@ func cmdWorktree(ctx context.Context, env *appEnv, args []string) int {
 	cwd := external.WorktreeCWD(env.getenv("HOME"), ref.Repo)
 	branch := worktreeBranchName(ref.Num)
 
-	_, wtErr := createGitWorktree(ctx, client, openErr, cwd, branch, label)
+	// Verify the guess before letting it mutate a repository.
+	//
+	// WorktreeCWD guesses "$HOME/github/<repo>" and falls back to "$HOME".
+	// That was harmless when this command only opened a plain workspace at
+	// that path. Creating a real git worktree makes a wrong guess destructive:
+	// on a machine with no ~/github whose owner has run `git init` in their
+	// home directory — dotfiles-in-$HOME, which is common — the fallback
+	// resolves to $HOME and clicking an issue link would branch and
+	// materialise a worktree inside their dotfiles repo.
+	//
+	// RepoCheckout requires the path to be a git root that actually belongs to
+	// the repo in the link. When it cannot confirm that, the worktree is
+	// skipped and the plain workspace below still runs, so the user still
+	// lands somewhere — they simply do not get a worktree in a repo they never
+	// named.
+	root, isRepo := external.RepoCheckout(ctx, "", cwd, ref.Owner, ref.Repo)
+	if !isRepo {
+		fmt.Fprintf(env.stderr,
+			"sesh-bro: %s is not a checkout of %s/%s — opening a plain workspace instead of creating a worktree there\n",
+			cwd, ref.Owner, ref.Repo)
+	}
+
+	wtErr := errNoRepoCheckout
+	if isRepo {
+		_, wtErr = createGitWorktree(ctx, client, openErr, root, branch, label)
+	}
 	if wtErr == nil {
 		fmt.Fprintf(env.stdout, "sesh-bro: created worktree for %s/%s#%s on %s\n", ref.Owner, ref.Repo, ref.Num, branch)
 		return 0
@@ -209,3 +235,8 @@ func cmdWorktree(ctx context.Context, env *appEnv, args []string) int {
 	fmt.Fprintf(env.stdout, "sesh-bro: created workspace for %s/%s#%s\n", ref.Owner, ref.Repo, ref.Num)
 	return 0
 }
+
+// errNoRepoCheckout marks the "could not confirm a checkout" path so it takes
+// the same plain-workspace fallback as a failed worktree.create, without
+// pretending an error came back from herdr.
+var errNoRepoCheckout = errors.New("sesh-bro: no confirmed checkout for this repo")

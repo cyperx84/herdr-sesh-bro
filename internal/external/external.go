@@ -566,3 +566,62 @@ func WorktreeLabel(num, title string) string {
 	}
 	return num + " — " + title
 }
+
+// RepoCheckout resolves the git checkout a GitHub ref belongs to, or reports
+// that it could not find one.
+//
+// WorktreeCWD guesses "$HOME/github/<repo>", falling back to "$HOME". That
+// guess was harmless while the worktree command only opened a plain workspace
+// at that path — a wrong guess meant a workspace rooted somewhere unhelpful.
+// Creating a real git worktree makes it destructive: on a machine with no
+// ~/github whose owner has run `git init` in their home directory — dotfiles-
+// in-$HOME, yadm-style, common — the guess resolves to $HOME, and clicking an
+// issue link would branch and materialise a worktree inside the dotfiles repo.
+//
+// So the guess is verified rather than trusted. The candidate must be a git
+// root AND must actually be a checkout of the repo named in the link, checked
+// against the remote first (authoritative, survives a renamed directory) and
+// falling back to the directory name (works for a repo with no remote).
+//
+// ok=false means "do not create a worktree here" and the caller must fall back
+// to the plain-workspace behaviour. Refusing costs a feature; guessing costs
+// somebody's dotfiles.
+func RepoCheckout(ctx context.Context, gitBin, candidate, owner, repo string) (string, bool) {
+	if candidate == "" {
+		return "", false
+	}
+	if info, err := os.Stat(candidate); err != nil || !info.IsDir() {
+		return "", false
+	}
+	root, ok := GitRoot(ctx, gitBin, candidate)
+	if !ok || root == "" {
+		return "", false
+	}
+	if remoteMatchesRepo(ctx, gitBin, root, owner, repo) {
+		return root, true
+	}
+	// No usable remote: accept only an exact directory-name match, which is
+	// the same evidence the original guess was built on but now confirmed to
+	// be a repository root rather than any directory that happens to exist.
+	return root, filepath.Base(root) == repo
+}
+
+// remoteMatchesRepo reports whether a checkout's origin points at owner/repo.
+//
+// Matches on the "owner/repo" fragment so every URL form works — ssh, https,
+// with or without a .git suffix — without parsing each shape separately.
+func remoteMatchesRepo(ctx context.Context, gitBin, root, owner, repo string) bool {
+	if gitBin == "" {
+		gitBin = "git"
+	}
+	out, err := exec.CommandContext(ctx, gitBin, "-C", root, "remote", "get-url", "origin").Output()
+	if err != nil {
+		return false
+	}
+	url := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(string(out)), ".git"))
+	if url == "" {
+		return false
+	}
+	want := owner + "/" + repo
+	return strings.HasSuffix(url, "/"+want) || strings.HasSuffix(url, ":"+want) || strings.HasSuffix(url, want)
+}

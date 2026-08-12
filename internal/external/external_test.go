@@ -610,3 +610,85 @@ func TestWorktreeLabel(t *testing.T) {
 		t.Errorf("WorktreeLabel with a title = %q, want %q", got, want)
 	}
 }
+
+// The failure this guard exists for: a machine with no ~/github whose owner has
+// run `git init` in their home directory (dotfiles-in-$HOME, yadm-style).
+// WorktreeCWD then falls back to $HOME, which IS a git repo — so an unverified
+// guess would branch and materialise a worktree inside their dotfiles.
+func TestRepoCheckoutRefusesAGitInitHomeDirectory(t *testing.T) {
+	home := t.TempDir()
+	gitInit(t, home) // no remote, directory name is not "somerepo"
+
+	got, ok := RepoCheckout(context.Background(), "", home, "owner", "somerepo")
+	if ok {
+		t.Errorf("accepted %q as a checkout of owner/somerepo — a worktree would be created in the user's dotfiles (got %q)", home, got)
+	}
+}
+
+// A plain directory that is not a repository at all must also be refused,
+// rather than handed to worktree.create to interpret.
+func TestRepoCheckoutRefusesANonRepo(t *testing.T) {
+	dir := t.TempDir()
+	if _, ok := RepoCheckout(context.Background(), "", dir, "owner", "repo"); ok {
+		t.Error("accepted a directory that is not a git repository")
+	}
+	if _, ok := RepoCheckout(context.Background(), "", filepath.Join(dir, "nope"), "owner", "repo"); ok {
+		t.Error("accepted a path that does not exist")
+	}
+	if _, ok := RepoCheckout(context.Background(), "", "", "owner", "repo"); ok {
+		t.Error("accepted an empty candidate path")
+	}
+}
+
+// The ordinary case still works: a checkout whose directory name matches, with
+// no remote configured.
+func TestRepoCheckoutAcceptsMatchingDirectoryName(t *testing.T) {
+	parent := t.TempDir()
+	repo := filepath.Join(parent, "myrepo")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitInit(t, repo)
+
+	got, ok := RepoCheckout(context.Background(), "", repo, "owner", "myrepo")
+	if !ok {
+		t.Fatal("refused a checkout whose directory name matches the repo")
+	}
+	if filepath.Base(got) != "myrepo" {
+		t.Errorf("resolved root = %q, want the repo root", got)
+	}
+}
+
+// The remote is authoritative, so a renamed directory still resolves — that is
+// the case a directory-name check alone would get wrong.
+func TestRepoCheckoutAcceptsRenamedDirectoryWithMatchingRemote(t *testing.T) {
+	parent := t.TempDir()
+	repo := filepath.Join(parent, "renamed-locally")
+	if err := os.Mkdir(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitInit(t, repo)
+	run(t, repo, "git", "remote", "add", "origin", "git@github.com:owner/realname.git")
+
+	if _, ok := RepoCheckout(context.Background(), "", repo, "owner", "realname"); !ok {
+		t.Error("refused a checkout whose remote matches, only its directory was renamed")
+	}
+	// And it must not accept a DIFFERENT repo that happens to sit there.
+	if _, ok := RepoCheckout(context.Background(), "", repo, "owner", "somethingelse"); ok {
+		t.Error("accepted a checkout whose remote points at a different repo")
+	}
+}
+
+func gitInit(t *testing.T, dir string) {
+	t.Helper()
+	run(t, dir, "git", "init", "-q")
+}
+
+func run(t *testing.T, dir string, name string, args ...string) {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%s %v: %v\n%s", name, args, err, out)
+	}
+}
