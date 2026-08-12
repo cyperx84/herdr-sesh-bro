@@ -20,8 +20,7 @@
 // no-URL, unrecognized-URL, and existing-workspace-focus paths are
 // unchanged and still match BEHAVIOUR.md exactly):
 //
-//   - No existing workspace matches the issue number (still the original,
-//     repo-agnostic check — herdrx.WorkspaceForIssueNumber, §9 S15):
+//   - No existing workspace matches the repo-qualified issue identity:
 //     attempt worktree.create on a branch derived from the issue number
 //     (worktreeBranchName), anchored with CWD set EXPLICITLY to the
 //     repo's checkout path — see createGitWorktree's comment for why an
@@ -83,13 +82,10 @@ func resolveWorktreeURL(env *appEnv, args []string) string {
 //     a new field threaded through parsing that's only ever populated for
 //     one of the two accepted ref forms — two shapes for a distinction
 //     the tool doesn't otherwise track anywhere, for no behavioural gain.
-//  2. The existing-workspace check this function's caller runs first
-//     (herdrx.WorkspaceForIssueNumber) is already number-only and
-//     repo/kind-agnostic by design (§9 S15). "issue-<num>" keeps the
-//     branch-naming convention consistent with that: the number is the
-//     identity here, not whatever GitHub currently classifies the number
-//     as — which can itself change (an issue later gets a linked PR that
-//     closes it; the number sesh-bro was pointed at doesn't).
+//  2. GitHub's number is the branch-local identity; the repository itself
+//     already scopes git branches. The workspace identity is separately
+//     repo-qualified in its label so equal numbers in different repositories
+//     cannot collide.
 //
 // Kept stable once chosen: a branch name that changes shape across
 // versions orphans every worktree anyone already has checked out under
@@ -151,17 +147,24 @@ func cmdWorktree(ctx context.Context, env *appEnv, args []string) int {
 	// hidden.
 	title, _ := external.ResolveIssueTitle(ctx, cacheDir, ref, time.Now(), "")
 
-	// Existing-workspace check (BEHAVIOUR.md §2.7, §9 S15: repo-agnostic —
-	// matches ANY workspace whose label contains the number as a
-	// standalone integer, not scoped to owner/repo). Unchanged: a second
-	// ctrl-click on the same issue still focuses the workspace already
-	// created for it — it never creates a second worktree.
+	// Resolve and verify the repository before matching legacy number-only
+	// labels. New labels carry owner/repo#N directly; old labels are accepted
+	// only when Herdr's worktree metadata or pane cwd independently points at
+	// this verified checkout. If verification or pane listing fails, skipping
+	// the legacy match is safer than focusing an unrelated repository.
+	cwd := external.WorktreeCWD(env.getenv("HOME"), ref.Repo)
+	root, isRepo := external.RepoCheckout(ctx, "", cwd, ref.Owner, ref.Repo)
+
 	workspaces, err := listWorkspaces(ctx, client, openErr)
 	if err != nil {
 		fmt.Fprintln(env.stderr, err)
 		return 1
 	}
-	if existing, ok := herdrx.WorkspaceForIssueNumber(workspaces, ref.Num); ok {
+	var panes []herdr.Pane
+	if isRepo {
+		panes, _ = client.ListPanes(ctx, "")
+	}
+	if existing, ok := herdrx.WorkspaceForIssue(workspaces, panes, ref.Owner, ref.Repo, ref.Num, root); ok {
 		if err := focusWorkspace(ctx, client, openErr, existing); err != nil {
 			fmt.Fprintln(env.stderr, err)
 			return 1
@@ -170,7 +173,7 @@ func cmdWorktree(ctx context.Context, env *appEnv, args []string) int {
 		return 0
 	}
 
-	label := external.WorktreeLabel(ref.Num, title)
+	label := external.WorktreeLabel(ref.Owner, ref.Repo, ref.Num, title)
 	// cwd anchors BOTH the worktree.create attempt below AND the
 	// plain-workspace fallback to the repo the issue actually belongs to
 	// — external.WorktreeCWD("$HOME/github/<repo>", falling back to
@@ -181,7 +184,6 @@ func cmdWorktree(ctx context.Context, env *appEnv, args []string) int {
 	// happens to be focused right now — see CreateWorktree's own comment
 	// in internal/herdrx/herdrx.go for why that specific failure mode is
 	// not hypothetical.
-	cwd := external.WorktreeCWD(env.getenv("HOME"), ref.Repo)
 	branch := worktreeBranchName(ref.Num)
 
 	// Verify the guess before letting it mutate a repository.
@@ -199,7 +201,6 @@ func cmdWorktree(ctx context.Context, env *appEnv, args []string) int {
 	// skipped and the plain workspace below still runs, so the user still
 	// lands somewhere — they simply do not get a worktree in a repo they never
 	// named.
-	root, isRepo := external.RepoCheckout(ctx, "", cwd, ref.Owner, ref.Repo)
 	if !isRepo {
 		fmt.Fprintf(env.stderr,
 			"sesh-bro: %s is not a checkout of %s/%s — opening a plain workspace instead of creating a worktree there\n",

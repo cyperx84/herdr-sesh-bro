@@ -113,40 +113,68 @@ func TestPreviousWorkspace_EmptyCurrentRefocusesFocused(t *testing.T) {
 	}
 }
 
-func TestWorkspaceForIssueNumber_StandaloneMatch(t *testing.T) {
+func TestWorkspaceForIssue_RepoQualifiedSameNumberAcrossOwnersAndRepos(t *testing.T) {
 	workspaces := []herdr.Workspace{
-		{ID: "w1", Label: "4091 unrelated"}, // 409 is a substring, not standalone
-		{ID: "w2", Label: "409 — some title"},
+		{ID: "owner-a", Label: "ownerA/repo#409 — first"},
+		{ID: "repo-b", Label: "ownerB/other#409 — second"},
+		{ID: "wanted", Label: "ownerB/repo#409 — wanted"},
 	}
-	ws, ok := WorkspaceForIssueNumber(workspaces, "409")
-	if !ok || ws != "w2" {
-		t.Fatalf("got (%q, %v), want (\"w2\", true) — standalone match only", ws, ok)
+	ws, ok := WorkspaceForIssue(workspaces, nil, "ownerB", "repo", "409", "")
+	if !ok || ws != "wanted" {
+		t.Fatalf("got (%q, %v), want (\"wanted\", true)", ws, ok)
 	}
 }
 
-func TestWorkspaceForIssueNumber_RepoAgnostic(t *testing.T) {
-	// §9 S15: matches any workspace with the number, regardless of repo.
-	workspaces := []herdr.Workspace{{ID: "w1", Label: "409 — owner-b/other-repo thing"}}
-	ws, ok := WorkspaceForIssueNumber(workspaces, "409")
+func TestWorkspaceForIssue_QualifiedIdentityIsCaseInsensitive(t *testing.T) {
+	workspaces := []herdr.Workspace{{ID: "w1", Label: "Owner/Repo#409"}}
+	ws, ok := WorkspaceForIssue(workspaces, nil, "owner", "repo", "409", "")
 	if !ok || ws != "w1" {
 		t.Fatalf("got (%q, %v), want (\"w1\", true)", ws, ok)
 	}
 }
 
-func TestWorkspaceForIssueNumber_NoMatch(t *testing.T) {
-	workspaces := []herdr.Workspace{{ID: "w1", Label: "unrelated"}}
-	if _, ok := WorkspaceForIssueNumber(workspaces, "409"); ok {
-		t.Fatalf("expected no match")
+func TestWorkspaceForIssue_LegacyLabelRequiresMatchingWorktreeRepoRoot(t *testing.T) {
+	workspaces := []herdr.Workspace{
+		{ID: "wrong", Label: "409 — old title", Worktree: &herdr.WorkspaceWorktree{RepoRoot: "/src/owner-a/repo"}},
+		{ID: "wanted", Label: "409 — old title", Worktree: &herdr.WorkspaceWorktree{RepoRoot: "/src/owner-b/repo"}},
+	}
+	ws, ok := WorkspaceForIssue(workspaces, nil, "owner-b", "repo", "409", "/src/owner-b/repo")
+	if !ok || ws != "wanted" {
+		t.Fatalf("got (%q, %v), want legacy workspace at matching repo root", ws, ok)
 	}
 }
 
-func TestWorkspaceForIssueNumber_FirstMatchInOrder(t *testing.T) {
-	workspaces := []herdr.Workspace{
-		{ID: "w1", Label: "409 first"},
-		{ID: "w2", Label: "409 second"},
+func TestWorkspaceForIssue_LegacyPlainWorkspaceUsesPaneCWD(t *testing.T) {
+	workspaces := []herdr.Workspace{{ID: "wrong", Label: "409"}, {ID: "wanted", Label: "409 — title"}}
+	panes := []herdr.Pane{{WorkspaceID: "wrong", CWD: "/src/other"}, {WorkspaceID: "wanted", CWD: "/src/repo"}}
+	ws, ok := WorkspaceForIssue(workspaces, panes, "owner", "repo", "409", "/src/repo")
+	if !ok || ws != "wanted" {
+		t.Fatalf("got (%q, %v), want legacy plain workspace at matching cwd", ws, ok)
 	}
-	ws, _ := WorkspaceForIssueNumber(workspaces, "409")
-	if ws != "w1" {
-		t.Fatalf("got %q, want first match w1", ws)
+}
+
+func TestWorkspaceForIssue_LegacyLabelWithoutRepoEvidenceDoesNotMatch(t *testing.T) {
+	workspaces := []herdr.Workspace{{ID: "w1", Label: "409 — old title"}}
+	if _, ok := WorkspaceForIssue(workspaces, nil, "ownerB", "repo", "409", ""); ok {
+		t.Fatal("number-only legacy label must not match without verified repository evidence")
+	}
+}
+
+func TestWorkspaceForIssue_OtherQualifiedLabelNeverFallsBackToLegacy(t *testing.T) {
+	workspaces := []herdr.Workspace{{ID: "wrong", Label: "ownerA/repo#409 — title"}}
+	panes := []herdr.Pane{{WorkspaceID: "wrong", CWD: "/src/repo"}}
+	if _, ok := WorkspaceForIssue(workspaces, panes, "ownerB", "repo", "409", "/src/repo"); ok {
+		t.Fatal("a qualified label for another owner must not be reinterpreted as legacy")
+	}
+}
+
+func TestWorkspaceForIssue_ExplicitIdentityPreferredOverEarlierLegacy(t *testing.T) {
+	workspaces := []herdr.Workspace{
+		{ID: "legacy", Label: "409", Worktree: &herdr.WorkspaceWorktree{RepoRoot: "/src/repo"}},
+		{ID: "qualified", Label: "owner/repo#409"},
+	}
+	ws, _ := WorkspaceForIssue(workspaces, nil, "owner", "repo", "409", "/src/repo")
+	if ws != "qualified" {
+		t.Fatalf("got %q, want explicit qualified match", ws)
 	}
 }

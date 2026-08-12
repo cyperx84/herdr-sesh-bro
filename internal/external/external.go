@@ -30,8 +30,8 @@
 //     importing internal/herdrx, so the two packages stay decoupled.
 //   - fzf ("sesh-bro: fzf is required") — internal/picker already owns
 //     that exact message (picker.Run).
-//   - Row/preview formatting, herdr-api calls, WorkspaceForIssueNumber's
-//     existing-workspace label match, and every stdout success message
+//   - Row/preview formatting, herdr-api calls, WorkspaceForIssue's
+//     repo-qualified workspace match, and every stdout success message
 //     ("sesh-bro: focused workspace <id>", "sesh-bro: created workspace
 //     for <owner>/<repo>#<num>") — internal/herdrx and the command layer
 //     that composes it with this package.
@@ -556,15 +556,16 @@ func WorktreeCWD(home, repo string) string {
 	return home
 }
 
-// WorktreeLabel formats a newly-created worktree workspace's label
-// (sesh-bro:428-429, BEHAVIOUR.md §2.7): "<num>" alone, or "<num> —
-// <title>" — space, U+2014 EM DASH, space — when a non-empty title was
-// resolved.
-func WorktreeLabel(num, title string) string {
+// WorktreeLabel formats a repo-qualified identity for a GitHub issue/PR.
+// Keeping "owner/repo#N" at the start makes the identity durable in Herdr's
+// workspace label even when no title is available; the optional human title
+// remains separated by space, U+2014 EM DASH, space.
+func WorktreeLabel(owner, repo, num, title string) string {
+	identity := owner + "/" + repo + "#" + num
 	if title == "" {
-		return num
+		return identity
 	}
-	return num + " — " + title
+	return identity + " — " + title
 }
 
 // RepoCheckout resolves the git checkout a GitHub ref belongs to, or reports

@@ -602,11 +602,11 @@ func TestWorktreeCWD_GithubIsAFile(t *testing.T) {
 }
 
 func TestWorktreeLabel(t *testing.T) {
-	if got := WorktreeLabel("409", ""); got != "409" {
-		t.Errorf("WorktreeLabel with no title = %q, want %q", got, "409")
+	if got := WorktreeLabel("owner", "repo", "409", ""); got != "owner/repo#409" {
+		t.Errorf("WorktreeLabel with no title = %q, want %q", got, "owner/repo#409")
 	}
-	want := "409 — Fix the thing" // EM DASH, U+2014
-	if got := WorktreeLabel("409", "Fix the thing"); got != want {
+	want := "owner/repo#409 — Fix the thing" // EM DASH, U+2014
+	if got := WorktreeLabel("owner", "repo", "409", "Fix the thing"); got != want {
 		t.Errorf("WorktreeLabel with a title = %q, want %q", got, want)
 	}
 }

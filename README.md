@@ -203,13 +203,15 @@ With a GitHub issue or PR URL visible in any pane, **ctrl-click** it. Sesh-bro
 extracts `owner/repo` and the number, resolves the title via `gh` (cached for
 24h), and:
 
-- focuses the existing workspace if one already matches that issue — a
-  second ctrl-click on the same issue never creates a second worktree, or
+- focuses the existing workspace if its repo-qualified identity matches that
+  issue — equal issue numbers in different owners/repositories stay distinct;
+  legacy number-only labels are recognized only when Herdr's worktree/path
+  data confirms the repository — or
 - otherwise creates a **real `git worktree`** on branch `issue-409`,
   anchored to the repo checked out at `~/github/<repo>` (or `$HOME` if
   `~/github` doesn't exist) — the workspace opens on the **new worktree's
   own path**, not the main checkout — labelled
-  `409 — Add git worktree support…`.
+  `owner/repo#409 — Add git worktree support…`.
 
 This is a real `git worktree add`-equivalent under the hood (herdr's
 `worktree.create`), not just a labelled workspace pointed at your existing

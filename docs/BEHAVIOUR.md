@@ -1543,6 +1543,13 @@ exists focuses the wrong workspace. Also, if `.label` were ever null, jq's `test
 error, the assignment fails, and `set -e` kills the script silently (stderr carries jq's
 message). Live herdr always sends a string label `[live]`, so this is latent.
 
+**Go-port divergence:** current sesh-bro fixes this by creating labels prefixed with
+`owner/repo#N` and matching that identity exactly (owner/repo case-insensitively). Old
+number-only labels are still recognized only when Herdr's `workspace.worktree.repo_root`
+or a workspace pane cwd matches a checkout already verified as the requested repository.
+Ambiguous legacy labels are intentionally not matched; creating another workspace is safer
+than focusing an unrelated repository.
+
 ### S16. `picker` exits 0 when `list` fails
 
 `selection="$(… | fzf …)" || true` swallows everything. If `list` aborts (daemon down, jq
