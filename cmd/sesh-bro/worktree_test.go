@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -70,5 +71,37 @@ func TestCmdWorktree_UnrecognizedURL(t *testing.T) {
 	want := "sesh-bro worktree: unrecognized URL not-a-url-at-all\n"
 	if stderr.String() != want {
 		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+}
+
+// TestWorktreeBranchName pins the chosen branch shape ("issue-<num>", never
+// "pr-<num>") and that it is stable across both accepted ref forms — the
+// design decision worktreeBranchName's own doc comment justifies. A test
+// that started passing "pr-42" for a /pull/ URL would silently orphan every
+// worktree branch anyone already created under "issue-42" for the same
+// number.
+func TestWorktreeBranchName(t *testing.T) {
+	cases := []struct {
+		name, num, want string
+	}{
+		{"plain number", "42", "issue-42"},
+		{"number from a /pull/ URL ref — still issue-, not pr-", "409", "issue-409"},
+	}
+	for _, c := range cases {
+		if got := worktreeBranchName(c.num); got != c.want {
+			t.Errorf("%s: worktreeBranchName(%q) = %q, want %q", c.name, c.num, got, c.want)
+		}
+	}
+}
+
+// TestCreateGitWorktree_OpenErrPassesThrough covers createGitWorktree's
+// openErr short-circuit without needing a live herdr socket: when opening
+// the client already failed, the wrapper must return that exact error and
+// never touch the (nil) client.
+func TestCreateGitWorktree_OpenErrPassesThrough(t *testing.T) {
+	wantErr := errors.New("dial failed")
+	_, err := createGitWorktree(context.Background(), nil, wantErr, "/repo", "issue-1", "1")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("err = %v, want %v", err, wantErr)
 	}
 }

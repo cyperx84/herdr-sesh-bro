@@ -1,6 +1,9 @@
 package render
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestStatusColor pins the exact escape for every recognised status plus
 // the catch-all, per BEHAVIOUR.md §1.6 / sesh-bro lines 51-61.
@@ -257,5 +260,31 @@ func TestPreviewDir(t *testing.T) {
 func TestPreviewUnknown(t *testing.T) {
 	if got, want := PreviewUnknown(), "no preview\n"; got != want {
 		t.Errorf("PreviewUnknown() = %q, want %q", got, want)
+	}
+}
+
+// A row is one TSV line. A tab or newline inside a label fabricates a second
+// row that fzf reads as real — and since the close action resolves its target
+// from the row's fields, that fake row's close button points at a workspace the
+// user never saw. Labels are not all self-authored: the worktree path builds
+// one from a GitHub issue title.
+func TestFormatRowCannotBeSplitByALabel(t *testing.T) {
+	evil := "409 — fix\nworkspace\tw-PROD\t◆ notes"
+	row, err := FormatRow(KindWorkspace, "w-REAL", "", evil, "1p/1t", Icons{})
+	if err != nil {
+		t.Fatalf("FormatRow: %v", err)
+	}
+	if n := strings.Count(row, "\n"); n != 1 {
+		t.Errorf("row contains %d newlines, want exactly the trailing one — a label split it into %d rows", n, n)
+	}
+	if n := strings.Count(row, "\t"); n != 2 {
+		t.Errorf("row contains %d tabs, want exactly the 2 field separators — a label injected another field", n)
+	}
+	if strings.Contains(row, "w-PROD") {
+		// It may appear as visible text; it must not appear as a target field.
+		fields := strings.SplitN(strings.TrimRight(row, "\n"), "\t", 3)
+		if len(fields) > 1 && fields[1] == "w-PROD" {
+			t.Error("an injected label became the row's close target")
+		}
 	}
 }

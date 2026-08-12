@@ -22,6 +22,13 @@
 // does the real work, rather than this package re-implementing (and risking
 // disagreeing with) logic that already exists and is already tested.
 //
+// The seven SESH_BRO_KEY_* variables (docs/COMPETITIVE-DEMAND.md #2,
+// Navigator issues/26 — no bash equivalent, this port's own feature) follow
+// the exact same split: Load resolves unset/empty to each key's hardcoded
+// default, and internal/picker's KeyBindings.resolved (sanitizeKey) owns the
+// "present but would corrupt a --bind argv string" guard, mirroring
+// PreviewWidth's own two-layer default exactly. See Keys below.
+//
 // What DOES belong here, because no sibling package claims it: the three
 // boolean-flavoured variables' S1 crash-or-not guard (PreviewEnabled,
 // HideCurrent, DirSources — see ParseBoolFlag), and small derived
@@ -36,6 +43,7 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/cyperx84/herdr-sesh-bro/internal/picker"
 	"github.com/cyperx84/herdr-sesh-bro/internal/render"
 )
 
@@ -103,6 +111,24 @@ type Config struct {
 	IconAgent     string
 	IconDir       string
 
+	// KeyWorkspaces, KeyAgents, KeyBlocked, KeyDirs, KeyAll, KeyCreate,
+	// KeyClose are SESH_BRO_KEY_WORKSPACES/AGENTS/BLOCKED/DIRS/ALL/CREATE/
+	// CLOSE, raw, one per fzf --bind action (docs/COMPETITIVE-DEMAND.md #2).
+	// Defaults are the six key literals bash hardcoded (sesh-bro:558-563)
+	// plus ctrl-q for KeyClose, Feature A's new close bind — see
+	// internal/picker.DefaultKeyBindings, which these seven must keep
+	// agreeing with. Any string is accepted here, same as the icon fields;
+	// the guard against a value that would break fzf's --bind grammar is
+	// internal/picker's KeyBindings.resolved (sanitizeKey), applied where
+	// these are actually spliced into an argv element — not here. See Keys.
+	KeyWorkspaces string
+	KeyAgents     string
+	KeyBlocked    string
+	KeyDirs       string
+	KeyAll        string
+	KeyCreate     string
+	KeyClose      string
+
 	// previewEnabledRaw, hideCurrentRaw, dirSourcesRaw hold
 	// CFG_PREVIEW_ENABLED/HIDE_CURRENT/DIR_SOURCES after the resolution
 	// default is applied, but BEFORE the `-eq 1` arithmetic test bash
@@ -153,6 +179,13 @@ func Load(getenv func(string) string) Config {
 		IconWorkspace:     orDefault(getenv("SESH_BRO_ICON_WORKSPACE"), "◆"),
 		IconAgent:         orDefault(getenv("SESH_BRO_ICON_AGENT"), "●"),
 		IconDir:           orDefault(getenv("SESH_BRO_ICON_DIR"), "▸"),
+		KeyWorkspaces:     orDefault(getenv("SESH_BRO_KEY_WORKSPACES"), "ctrl-w"),
+		KeyAgents:         orDefault(getenv("SESH_BRO_KEY_AGENTS"), "ctrl-e"),
+		KeyBlocked:        orDefault(getenv("SESH_BRO_KEY_BLOCKED"), "ctrl-b"),
+		KeyDirs:           orDefault(getenv("SESH_BRO_KEY_DIRS"), "ctrl-x"),
+		KeyAll:            orDefault(getenv("SESH_BRO_KEY_ALL"), "ctrl-o"),
+		KeyCreate:         orDefault(getenv("SESH_BRO_KEY_CREATE"), "ctrl-/"),
+		KeyClose:          orDefault(getenv("SESH_BRO_KEY_CLOSE"), "ctrl-q"),
 		previewEnabledRaw: orDefault(getenv("SESH_BRO_PREVIEW_ENABLED"), "1"),
 		hideCurrentRaw:    orDefault(getenv("SESH_BRO_HIDE_CURRENT"), "0"),
 		dirSourcesRaw:     orDefault(getenv("SESH_BRO_DIR_SOURCES"), "1"),
@@ -244,6 +277,24 @@ func (c Config) DirSources() (bool, error) {
 // design (see the package doc comment).
 func (c Config) Icons() render.Icons {
 	return render.Icons{Workspace: c.IconWorkspace, Agent: c.IconAgent, Dir: c.IconDir}
+}
+
+// Keys builds the picker.KeyBindings BuildArgs needs directly from the
+// seven SESH_BRO_KEY_* fields — Icons' exact counterpart for Feature B
+// (docs/COMPETITIVE-DEMAND.md #2): a plain field copy, no guard. The
+// malformed-value guard (sanitizeKey) lives in internal/picker and runs
+// against whatever this returns, the same ownership split Icons' sibling
+// PreviewWidth/Aliases already use (see the package doc comment).
+func (c Config) Keys() picker.KeyBindings {
+	return picker.KeyBindings{
+		Workspaces: c.KeyWorkspaces,
+		Agents:     c.KeyAgents,
+		Blocked:    c.KeyBlocked,
+		Dirs:       c.KeyDirs,
+		All:        c.KeyAll,
+		Create:     c.KeyCreate,
+		Close:      c.KeyClose,
+	}
 }
 
 // defaultFilterFlags maps CFG_DEFAULT_FILTER's four recognised values to

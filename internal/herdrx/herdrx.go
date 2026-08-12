@@ -3,8 +3,13 @@
 // Every `herdr` CLI invocation and every `jq` subprocess the bash used
 // (docs/BEHAVIOUR.md §6) collapses to a direct call through
 // github.com/cyperx84/herdr-api's socket client. This file wraps the eleven
-// calls sesh-bro actually makes (§6's mapping table, rows #1-#11). Two calls
-// in that table are deliberately NOT here:
+// calls sesh-bro actually makes (§6's mapping table, rows #1-#11), plus
+// deliberate feature additions beyond that parity set that each carry their
+// own justification at the call site: CloseWorkspace
+// (docs/COMPETITIVE-DEMAND.md #1) and CreateWorktree
+// (cmd/sesh-bro/worktree.go's doc comment — turning `worktree` into a real
+// `git worktree` instead of an issue-labelled plain workspace). Two calls
+// from §6's original table are deliberately NOT here:
 //
 //   - #12 plugin.pane.open (`open`'s implementation) has no herdr-api
 //     method — it stays a `herdr` CLI shell-out, owned by the command
@@ -107,6 +112,24 @@ func (c *Client) FocusWorkspace(ctx context.Context, id string) error {
 	return nil
 }
 
+// CloseWorkspace is `workspace.close` — closing a workspace from the picker
+// (docs/COMPETITIVE-DEMAND.md #1: "Close / remove a workspace from the
+// picker"). The bash has no equivalent to cite; four independent competitor
+// plugins converge on this being table-stakes and sesh-bro had no close
+// action at all, so this is net-new rather than ported.
+//
+// herdr-api's WorkspaceClose has the same "no dedicated response payload"
+// shape as WorkspaceFocus (see herdr-api's own doc comment on it) — success
+// is nil error, and a workspace.closed event, not a return value, is what
+// tells any other observer it happened. Closing every tab/pane inside the
+// workspace is the daemon's job, not this package's.
+func (c *Client) CloseWorkspace(ctx context.Context, id string) error {
+	if err := c.c.WorkspaceClose(ctx, id); err != nil {
+		return fmt.Errorf("herdrx: close workspace %s: %w", id, err)
+	}
+	return nil
+}
+
 // CreateWorkspace is `herdr workspace create --cwd <cwd> --label <label>
 // --focus` (BEHAVIOUR.md §6 #4). Focus is not a parameter here because the
 // bash never creates an unfocused workspace — all four call sites (connect
@@ -119,6 +142,36 @@ func (c *Client) CreateWorkspace(ctx context.Context, cwd, label string) (herdr.
 	})
 	if err != nil {
 		return herdr.WorkspaceCreated{}, fmt.Errorf("herdrx: create workspace for %s: %w", cwd, err)
+	}
+	return res, nil
+}
+
+// CreateWorktree is `worktree.create` — creates a real git worktree on
+// branch, rooted in the repo at cwd, and opens it as a focused workspace.
+// This is `worktree`'s (cmd/sesh-bro/worktree.go) upgrade from BEHAVIOUR.md
+// §2.7's original "issue-labelled plain workspace, no git worktree ever
+// created" bash behaviour — see that file's doc comment for the full
+// rationale.
+//
+// cwd is NOT optional the way WorktreeCreateParams' pointer field might
+// suggest. herdr-api's own WorktreeCreateParams doc comment: "CWD picks
+// which repo... if WorkspaceID doesn't already imply one" — leave both
+// unset and worktree.create resolves against whichever workspace the
+// daemon currently has focused, which silently creates the worktree in
+// an unrelated repo whenever this process isn't itself running inside the
+// target repo's workspace. That is the common case for `worktree`: it is
+// invoked from a ctrl-click in ANY pane, not necessarily one already
+// sitting in the issue's repo. This was observed for real in a sibling
+// project. Every caller of this method must pass the repo it means.
+func (c *Client) CreateWorktree(ctx context.Context, cwd, branch, label string) (herdr.WorktreeCreated, error) {
+	res, err := c.c.WorktreeCreate(ctx, herdr.WorktreeCreateParams{
+		CWD:    &cwd,
+		Branch: &branch,
+		Label:  &label,
+		Focus:  true,
+	})
+	if err != nil {
+		return herdr.WorktreeCreated{}, fmt.Errorf("herdrx: create worktree for %s on %s: %w", cwd, branch, err)
 	}
 	return res, nil
 }

@@ -3,6 +3,8 @@ package config
 import (
 	"errors"
 	"testing"
+
+	"github.com/cyperx84/herdr-sesh-bro/internal/picker"
 )
 
 // envMap builds a getenv func over a fixed map, for tests that don't want
@@ -26,6 +28,13 @@ func TestLoad_Defaults(t *testing.T) {
 		IconWorkspace: "◆",
 		IconAgent:     "●",
 		IconDir:       "▸",
+		KeyWorkspaces: "ctrl-w",
+		KeyAgents:     "ctrl-e",
+		KeyBlocked:    "ctrl-b",
+		KeyDirs:       "ctrl-x",
+		KeyAll:        "ctrl-o",
+		KeyCreate:     "ctrl-/",
+		KeyClose:      "ctrl-q",
 	}
 	got := Config{
 		PreviewWidth:  c.PreviewWidth,
@@ -37,6 +46,13 @@ func TestLoad_Defaults(t *testing.T) {
 		IconWorkspace: c.IconWorkspace,
 		IconAgent:     c.IconAgent,
 		IconDir:       c.IconDir,
+		KeyWorkspaces: c.KeyWorkspaces,
+		KeyAgents:     c.KeyAgents,
+		KeyBlocked:    c.KeyBlocked,
+		KeyDirs:       c.KeyDirs,
+		KeyAll:        c.KeyAll,
+		KeyCreate:     c.KeyCreate,
+		KeyClose:      c.KeyClose,
 	}
 	if got != want {
 		t.Fatalf("Load(empty env) = %+v, want %+v", got, want)
@@ -102,12 +118,23 @@ func TestLoad_NonEmptyOverridesDefault(t *testing.T) {
 		"SESH_BRO_PREVIEW_ENABLED": "0",
 		"SESH_BRO_HIDE_CURRENT":    "1",
 		"SESH_BRO_DIR_SOURCES":     "0",
+		"SESH_BRO_KEY_WORKSPACES":  "alt-w",
+		"SESH_BRO_KEY_AGENTS":      "alt-e",
+		"SESH_BRO_KEY_BLOCKED":     "alt-b",
+		"SESH_BRO_KEY_DIRS":        "alt-x",
+		"SESH_BRO_KEY_ALL":         "alt-o",
+		"SESH_BRO_KEY_CREATE":      "alt-c",
+		"SESH_BRO_KEY_CLOSE":       "alt-q",
 	}
 	c := Load(envMap(env))
 	if c.PreviewWidth != "40%" || c.Aliases != "dev=Development" || c.Blacklist != "/tmp/*:/var/*" ||
 		c.CacheTTL != "10" || c.DefaultFilter != "agents" || c.SortOrder != "agents,dirs" ||
 		c.IconWorkspace != "W" || c.IconAgent != "A" || c.IconDir != "D" {
 		t.Fatalf("Load did not thread every overridden value through: %+v", c)
+	}
+	if c.KeyWorkspaces != "alt-w" || c.KeyAgents != "alt-e" || c.KeyBlocked != "alt-b" ||
+		c.KeyDirs != "alt-x" || c.KeyAll != "alt-o" || c.KeyCreate != "alt-c" || c.KeyClose != "alt-q" {
+		t.Fatalf("Load did not thread every overridden SESH_BRO_KEY_* value through: %+v", c)
 	}
 	if pe, err := c.PreviewEnabled(); err != nil || pe {
 		t.Errorf("PreviewEnabled = (%v, %v), want (false, nil)", pe, err)
@@ -273,5 +300,85 @@ func TestIcons(t *testing.T) {
 	icons := c.Icons()
 	if icons.Workspace != "W" || icons.Agent != "A" || icons.Dir != "D" {
 		t.Errorf("Icons() = %+v, want {W A D}", icons)
+	}
+}
+
+// TestLoad_KeyEmptyValueFallsBackToDefault is SESH_BRO_KEY_*'s share of
+// TestLoad_EmptyValueFallsBackToDefault: a variable present but set to the
+// exact empty string is indistinguishable from unset, same as every other
+// SESH_BRO_* variable (BEHAVIOUR.md §1.5's `${VAR:-default}` rule, which
+// this port's own SESH_BRO_KEY_* variables follow by design even though
+// bash never had them).
+func TestLoad_KeyEmptyValueFallsBackToDefault(t *testing.T) {
+	c := Load(envMap(map[string]string{
+		"SESH_BRO_KEY_CLOSE":  "",
+		"SESH_BRO_KEY_CREATE": "",
+	}))
+	if c.KeyClose != "ctrl-q" {
+		t.Errorf("KeyClose = %q, want default ctrl-q", c.KeyClose)
+	}
+	if c.KeyCreate != "ctrl-/" {
+		t.Errorf("KeyCreate = %q, want default ctrl-/", c.KeyCreate)
+	}
+}
+
+// TestKeys asserts the picker.KeyBindings convenience is a plain field
+// copy — Keys' exact counterpart to TestIcons above. No guard here: a
+// malformed value survives this call unchanged, because sanitizeKey lives
+// in internal/picker, not here (see the package doc comment and
+// TestLoad_MalformedKeyDegradesOnlyInPicker below for where that guard
+// actually fires).
+func TestKeys(t *testing.T) {
+	c := Config{
+		KeyWorkspaces: "alt-w",
+		KeyAgents:     "alt-e",
+		KeyBlocked:    "alt-b",
+		KeyDirs:       "alt-x",
+		KeyAll:        "alt-o",
+		KeyCreate:     "alt-c",
+		KeyClose:      "bad:key", // deliberately malformed — passed through untouched here
+	}
+	want := picker.KeyBindings{
+		Workspaces: "alt-w",
+		Agents:     "alt-e",
+		Blocked:    "alt-b",
+		Dirs:       "alt-x",
+		All:        "alt-o",
+		Create:     "alt-c",
+		Close:      "bad:key",
+	}
+	if got := c.Keys(); got != want {
+		t.Errorf("Keys() = %+v, want %+v", got, want)
+	}
+}
+
+// TestLoad_MalformedKeyDegradesOnlyInPicker is the end-to-end contract the
+// task asks for: a malformed SESH_BRO_KEY_* value must never reach fzf as a
+// broken --bind flag. Config.Load and Config.Keys both pass it through
+// unvalidated (TestKeys above) — the guard fires one layer later, in
+// picker.BuildArgs (via KeyBindings.resolved/sanitizeKey), by which point
+// the argv is well-formed regardless of what SESH_BRO_KEY_CLOSE held.
+func TestLoad_MalformedKeyDegradesOnlyInPicker(t *testing.T) {
+	c := Load(envMap(map[string]string{
+		"SESH_BRO_KEY_CLOSE": "ctrl-q:evil(rm -rf ~)", // colon + parens: would corrupt the --bind argv
+	}))
+	// Survives Load/Keys unvalidated, exactly like every other SESH_BRO_*
+	// raw field this package exposes (PreviewWidth, Aliases, Blacklist).
+	if c.KeyClose != "ctrl-q:evil(rm -rf ~)" {
+		t.Fatalf("KeyClose = %q, want the raw malformed value preserved by Load", c.KeyClose)
+	}
+	args := picker.BuildArgs(picker.Options{SelfPath: "/bin/sesh-bro", Keys: c.Keys()})
+	wantCloseBind := "--bind=alt-x:execute-silent('/bin/sesh-bro' close {1} {2})+reload('/bin/sesh-bro' list )"
+	found := false
+	for _, a := range args {
+		if a == wantCloseBind {
+			found = true
+		}
+		if a == "--bind=ctrl-q:evil(rm -rf ~):execute-silent('/bin/sesh-bro' close {1} {2})+reload('/bin/sesh-bro' list )" {
+			t.Fatalf("malformed SESH_BRO_KEY_CLOSE reached the argv uncorrected: %q", a)
+		}
+	}
+	if !found {
+		t.Errorf("close bind fell back to the default alt-x, but %q was not found in argv %v", wantCloseBind, args)
 	}
 }

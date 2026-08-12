@@ -9,8 +9,11 @@ import (
 )
 
 // TestBuildArgs_Default pins the exact argv for the common case: preview
-// on, default width, no hide-current, no alias — every element in bash's
-// exact order (sesh-bro:536-564, BEHAVIOUR.md §3.1).
+// on, default width, no hide-current, no alias, default (unset) keys —
+// every element in bash's exact order for the six ported binds
+// (sesh-bro:536-564, BEHAVIOUR.md §3.1), plus Feature A's new ctrl-q close
+// bind and the header's "· alt-x close" clause
+// (docs/COMPETITIVE-DEMAND.md #1).
 func TestBuildArgs_Default(t *testing.T) {
 	got := BuildArgs(Options{
 		SelfPath:       "/opt/sesh-bro/sesh-bro",
@@ -25,9 +28,10 @@ func TestBuildArgs_Default(t *testing.T) {
 		"--tiebreak=index",
 		"--query=",
 		"--prompt=sesh> ",
-		"--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all · ^/ create",
+		"--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all · alt-x close · ^/ create",
 		"--preview='/opt/sesh-bro/sesh-bro' preview {1} {2}",
 		"--preview-window=right,60%,border-left",
+		"--bind=alt-x:execute-silent('/opt/sesh-bro/sesh-bro' close {1} {2})+reload('/opt/sesh-bro/sesh-bro' list )",
 		"--bind=ctrl-w:reload('/opt/sesh-bro/sesh-bro' list --workspaces )",
 		"--bind=ctrl-e:reload('/opt/sesh-bro/sesh-bro' list --agents )",
 		"--bind=ctrl-b:reload('/opt/sesh-bro/sesh-bro' list --blocked )",
@@ -51,6 +55,7 @@ func TestBuildArgs_HideCurrent(t *testing.T) {
 		"--bind=ctrl-b:reload('/bin/sesh-bro' list --blocked --hide-current)",
 		"--bind=ctrl-x:reload('/bin/sesh-bro' list --dirs --hide-current)",
 		"--bind=ctrl-o:reload('/bin/sesh-bro' list --hide-current)",
+		"--bind=alt-x:execute-silent('/bin/sesh-bro' close {1} {2})+reload('/bin/sesh-bro' list --hide-current)",
 		"--bind=ctrl-/:execute-silent('/bin/sesh-bro' create)+reload('/bin/sesh-bro' list --hide-current)",
 	}
 	for _, want := range wantBinds {
@@ -141,6 +146,109 @@ func TestBuildArgs_SelfPathWithSpaceAndQuote(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("missing %q in argv %v", wantPreview, got)
+	}
+}
+
+// TestSanitizeKey covers Feature B's malformed-value guard
+// (docs/COMPETITIVE-DEMAND.md #2): a well-formed override is used verbatim,
+// and anything that would corrupt a --bind=KEY:ACTION(...) argv element —
+// empty, an embedded colon (redefines ACTION), a comma (chains a second key
+// spec), parens, whitespace — degrades to the supplied default instead of
+// reaching BuildArgs at all.
+func TestSanitizeKey(t *testing.T) {
+	const def = "ctrl-w"
+	cases := map[string]string{
+		"ctrl-a":       "ctrl-a",
+		"alt-w":        "alt-w",
+		"f5":           "f5",
+		"q":            "q",
+		"ctrl-/":       "ctrl-/",
+		"double-click": "double-click",
+		"":             def,
+		"ctrl-a:foo":   def, // colon would splice a second ACTION onto this bind
+		"ctrl-a,q":     def, // comma chains an extra, unintended key spec
+		"ctrl-a)pwn(":  def, // parens would prematurely close/reopen the action list
+		"ctrl a":       def, // whitespace has no meaning in a key spec
+		"-ctrl-a":      def, // must start alnum
+	}
+	for in, want := range cases {
+		if got := sanitizeKey(in, def); got != want {
+			t.Errorf("sanitizeKey(%q, %q) = %q, want %q", in, def, got, want)
+		}
+	}
+}
+
+// TestKeyBindings_Resolved proves every field falls back independently —
+// one malformed override does not clobber its siblings — and that a
+// well-formed override is threaded straight through untouched.
+func TestKeyBindings_Resolved(t *testing.T) {
+	got := KeyBindings{
+		Workspaces: "alt-w",  // valid override
+		Agents:     "bad:ag", // malformed -> default
+		Close:      "ctrl-d", // valid override
+		// Blocked, Dirs, All, Create left zero-value -> default
+	}.resolved()
+	want := KeyBindings{
+		Workspaces: "alt-w",
+		Agents:     DefaultKeyBindings.Agents,
+		Blocked:    DefaultKeyBindings.Blocked,
+		Dirs:       DefaultKeyBindings.Dirs,
+		All:        DefaultKeyBindings.All,
+		Create:     DefaultKeyBindings.Create,
+		Close:      "ctrl-d",
+	}
+	if got != want {
+		t.Errorf("KeyBindings.resolved() = %+v, want %+v", got, want)
+	}
+}
+
+// TestKeyLabel covers the --header shorthand: single-character ctrl- binds
+// shorten to bash's caret notation, everything else is shown verbatim.
+func TestKeyLabel(t *testing.T) {
+	cases := map[string]string{
+		"ctrl-w":       "^w",
+		"ctrl-/":       "^/",
+		"ctrl-q":       "^q", // still a valid caret form; no longer the close default
+		"alt-x":        "alt-x",
+		"alt-w":        "alt-w",
+		"f5":           "f5",
+		"q":            "q",
+		"double-click": "double-click",
+		"ctrl-space":   "ctrl-space", // "space" is 5 chars, not one — shown verbatim
+	}
+	for in, want := range cases {
+		if got := keyLabel(in); got != want {
+			t.Errorf("keyLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestBuildArgs_KeyOverrides proves SESH_BRO_KEY_* overrides (via
+// Options.Keys) reach both the --bind flags and the --header hint text
+// together — the header must never name a key that isn't actually bound
+// (keyLabel's doc comment) — while a malformed override in the mix degrades
+// only that one action, both in the bind and in the header.
+func TestBuildArgs_KeyOverrides(t *testing.T) {
+	got := BuildArgs(Options{
+		SelfPath: "/bin/sesh-bro",
+		Keys: KeyBindings{
+			Close:  "ctrl-d",  // valid override
+			Create: "bad:key", // malformed -> falls back to ctrl-/
+		},
+	})
+	wantHeader := "--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all · ^d close · ^/ create"
+	wantCloseBind := "--bind=ctrl-d:execute-silent('/bin/sesh-bro' close {1} {2})+reload('/bin/sesh-bro' list )"
+	wantCreateBind := "--bind=ctrl-/:execute-silent('/bin/sesh-bro' create)+reload('/bin/sesh-bro' list )"
+	for _, want := range []string{wantHeader, wantCloseBind, wantCreateBind} {
+		found := false
+		for _, g := range got {
+			if g == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("missing %q in argv %v", want, got)
+		}
 	}
 }
 
@@ -312,5 +420,61 @@ func TestRun_FzfNotFound(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "sesh-bro: fzf is required") {
 		t.Errorf("stderr = %q, want it to contain the fzf-required message", stderr.String())
+	}
+}
+
+// fzf documents four default abort keys — ctrl-c, ctrl-g, ctrl-q, esc. Binding
+// a silent, irreversible workspace close to one of them means the keystroke fzf
+// itself trains users to press for "get me out of here" destroys a workspace
+// and every agent in it, with execute-silent swallowing any message.
+func TestCloseIsNotBoundToAnFzfAbortKey(t *testing.T) {
+	for _, abort := range []string{"ctrl-c", "ctrl-g", "ctrl-q", "esc"} {
+		if DefaultKeyBindings.Close == abort {
+			t.Errorf("close defaults to %q, which fzf uses to abort — pressing it to dismiss the picker would delete a workspace", abort)
+		}
+	}
+}
+
+// fzf applies last-bind-wins. If the close bind were emitted after the
+// navigation binds, a collision — SESH_BRO_KEY_CLOSE=ctrl-w, a plausible
+// preference or a copy-paste slip — would silently make a navigation key
+// destructive while the header still advertised both.
+func TestCloseBindIsEmittedBeforeNavigationBinds(t *testing.T) {
+	args := BuildArgs(Options{SelfPath: "/bin/sesh-bro"})
+
+	closeAt, navAt := -1, -1
+	for i, a := range args {
+		if strings.Contains(a, " close {1} {2}") {
+			closeAt = i
+		}
+		if navAt == -1 && strings.Contains(a, "list --workspaces") {
+			navAt = i
+		}
+	}
+	if closeAt == -1 || navAt == -1 {
+		t.Fatalf("expected both a close bind and a navigation bind: close=%d nav=%d", closeAt, navAt)
+	}
+	if closeAt > navAt {
+		t.Errorf("close bind at %d comes after navigation bind at %d — a key collision would make navigation destructive", closeAt, navAt)
+	}
+}
+
+// A well-shaped value that fzf rejects makes fzf exit 2, which Run swallows —
+// the picker flashes and vanishes with exit 0 and no diagnostic. One typo in
+// one env var then makes the picker unopenable and unexplainable.
+func TestValidKeyMatchesFzfGrammarNotJustShape(t *testing.T) {
+	valid := []string{"ctrl-w", "ctrl-/", "alt-x", "f1", "f12", "tab", "shift-tab", "enter", "double-click", "q", "?"}
+	for _, k := range valid {
+		if !validKey(k) {
+			t.Errorf("validKey(%q) = false, but fzf accepts it", k)
+		}
+	}
+	// Every one of these passes a naive [A-Za-z0-9][A-Za-z0-9_/-]* shape check
+	// and every one makes fzf exit 2 with "unsupported key".
+	invalid := []string{"shift-a", "zzz", "f25", "ctrl-ww", "alt-", "q_x", "a/b", ""}
+	for _, k := range invalid {
+		if validKey(k) {
+			t.Errorf("validKey(%q) = true, but fzf rejects it and will not start", k)
+		}
 	}
 }

@@ -16,7 +16,7 @@ sesh> alpha                                       ▲ 40%
 ● beta   claude · Rename arcade route  [feat/x]   │
 ▸ my-project  /Users/me/github/my-project         │
                                                   ▼
-enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all · ^/ create
+enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all · ^q close · ^/ create
 ```
 
 ## Features
@@ -38,10 +38,14 @@ enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all �
 - **Filter sources from inside fzf** — `^w` workspaces / `^e` agents / `^b`
   blocked / `^x` dirs / `^o` all reload the list; `^/` creates a workspace
   from a directory.
+- **Close a workspace from the picker** — `^q` closes the highlighted
+  workspace row and reloads the list in place; a no-op (never an error) on
+  agent/dir rows and on the workspace the picker itself is running in.
 - **Current-first ordering** — the current workspace and its agents float to
   the top, then blocked → working → done → idle. Override with `sort_order`.
 - **Configurable** — preview size, default filter, dir sources, blacklist,
-  icons, aliases, and sort order are all user-settable (see [Configuration](#configuration)).
+  icons, keybinds, aliases, and sort order are all user-settable (see
+  [Configuration](#configuration)).
 - **Herdr plugin integration** — installs as a plugin with a popup pane,
   workspace-context actions, a startup dependency check, and a link handler.
 
@@ -105,6 +109,7 @@ sesh-bro picker          # interactive fzf picker (default command)
 sesh-bro list            # picker candidates as tab-separated rows
 sesh-bro list --json     # machine-readable candidates
 sesh-bro connect TYPE TARGET
+sesh-bro close TYPE TARGET   # close a workspace (workspace rows only)
 sesh-bro create [PATH]   # create a workspace for a dir (default: current dir)
 sesh-bro preview TYPE TARGET
 sesh-bro open            # open the picker popup via the Herdr plugin API
@@ -123,12 +128,22 @@ sesh-bro worktree [URL]  # create/focus the workspace for a GitHub issue/PR
 | `^b` | reload: blocked agents only |
 | `^x` | reload: directories only |
 | `^o` | reload: all sources |
+| `^q` | close the highlighted **workspace** (no-op on agent/dir rows; refuses the current workspace) |
 | `^/` | create a new workspace from a directory |
 | `esc` | exit |
 
 > The keybinds deliberately avoid `^a` (Herdr's prefix) and `^h/j/k/l`
 > (vim-herdr-navigation / tmux pane keys) so they never fight your editor
 > or window-manager chords.
+
+Every keybind above is overridable — see `SESH_BRO_KEY_*` in
+[Configuration](#configuration). The picker's header hint always reflects
+whatever key is actually bound, not the defaults shown here.
+
+`^q` only closes workspace rows. Selecting an agent or zoxide-directory row
+and pressing `^q` prints a message and does nothing — it never errors out
+of the picker. Closing the workspace the picker itself is running in is
+refused the same way, since that would kill the picker mid-action.
 
 ### Flags
 
@@ -157,7 +172,20 @@ schema exposes. Set them in your shell, or via Herdr's config UI:
 | `SESH_BRO_ICON_WORKSPACE` | `◆` | Workspace icon glyph |
 | `SESH_BRO_ICON_AGENT` | `●` | Agent icon glyph |
 | `SESH_BRO_ICON_DIR` | `▸` | Directory icon glyph |
+| `SESH_BRO_KEY_WORKSPACES` | `ctrl-w` | Reload: workspaces only |
+| `SESH_BRO_KEY_AGENTS` | `ctrl-e` | Reload: agents only |
+| `SESH_BRO_KEY_BLOCKED` | `ctrl-b` | Reload: blocked agents only |
+| `SESH_BRO_KEY_DIRS` | `ctrl-x` | Reload: directories only |
+| `SESH_BRO_KEY_ALL` | `ctrl-o` | Reload: all sources |
+| `SESH_BRO_KEY_CLOSE` | `ctrl-q` | Close the highlighted workspace |
+| `SESH_BRO_KEY_CREATE` | `ctrl-/` | Create a workspace from a directory |
 | `SESH_BRO_ALIASES` | *(empty)* | `alias=label:alias2=label2` prefill queries |
+
+`SESH_BRO_KEY_*` values must be a valid fzf key name (`ctrl-a`, `alt-w`,
+`f5`, a bare letter, ...); anything that would corrupt the underlying
+`--bind` flag — an empty value, a stray `:`/`,`/`(`/`)` — falls back to that
+key's default instead of breaking the picker. The header hint (`^w
+workspaces · ...`) always reflects the key actually bound.
 
 ### Environment
 
@@ -175,14 +203,22 @@ With a GitHub issue or PR URL visible in any pane, **ctrl-click** it. Sesh-bro
 extracts `owner/repo` and the number, resolves the title via `gh` (cached for
 24h), and:
 
-- focuses the existing workspace if one already matches that issue, or
-- creates a workspace named `409 — Add git worktree support…` (under
-  `~/github/<repo>`, or `$HOME`) and focuses it.
+- focuses the existing workspace if one already matches that issue — a
+  second ctrl-click on the same issue never creates a second worktree, or
+- otherwise creates a **real `git worktree`** on branch `issue-409`,
+  anchored to the repo checked out at `~/github/<repo>` (or `$HOME` if
+  `~/github` doesn't exist) — the workspace opens on the **new worktree's
+  own path**, not the main checkout — labelled
+  `409 — Add git worktree support…`.
 
-> **Note:** "worktree" here means an *issue workspace* — a plain Herdr
-> workspace labelled after the issue — not a `git worktree` on disk. If you
-> want a real `git worktree`, create one yourself (`git worktree add`) and the
-> workspace will attach to it on connect.
+This is a real `git worktree add`-equivalent under the hood (herdr's
+`worktree.create`), not just a labelled workspace pointed at your existing
+checkout — ctrl-clicking two different issues on the same repo gives you two
+independent working trees, not two workspaces sharing one. If the target
+isn't a git repository, or worktree creation fails for any other reason,
+sesh-bro falls back to today's plain workspace (same location, same label)
+rather than failing the command outright — you'll see a one-line note on
+stderr explaining the fallback.
 
 The link handler pattern is `^https://github\.com/[^/]+/[^/]+/(issues|pull)/[0-9]+$`.
 You can also run it manually: `sesh-bro worktree https://github.com/.../issues/409`.

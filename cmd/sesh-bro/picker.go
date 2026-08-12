@@ -94,6 +94,7 @@ func cmdPicker(ctx context.Context, env *appEnv, args []string) int {
 		PreviewEnabled: previewEnabled,
 		PreviewWidth:   cfg.PreviewWidth,
 		Aliases:        cfg.Aliases,
+		Keys:           cfg.Keys(),
 		Stderr:         env.stderr,
 	}
 	connector := func(kind, target string) error {

@@ -69,6 +69,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 		return cmdList(ctx, env, args)
 	case "connect":
 		return cmdConnect(ctx, env, args)
+	case "close":
+		// docs/COMPETITIVE-DEMAND.md #1 — no bash counterpart; see
+		// close.go's doc comment for why this sits next to connect.
+		return cmdClose(ctx, env, args)
 	case "create":
 		return cmdCreate(ctx, env, args)
 	case "preview":
@@ -224,6 +228,7 @@ commands:
   list   [flags]     print picker candidates (type, target, display)
   connect TYPE TARGET
                      focus a workspace/agent, or create a workspace for a dir
+  close TYPE TARGET  close a workspace (workspace rows only; picker ctrl-q)
   create [PATH]      create a workspace for a directory (default: current dir)
   preview TYPE TARGET
                      render the preview used by the picker
@@ -249,7 +254,7 @@ flags:
 environment:
   HERDR_BIN_PATH     the herdr binary to use (default: herdr on PATH)
   SESH_BRO_*         config overrides (preview_width, hide_current, dir_sources,
-                     cache_ttl, default_filter, blacklist, icons, aliases...)
+                     cache_ttl, default_filter, blacklist, icons, keys, aliases...)
 `)
 	return b.String()
 }

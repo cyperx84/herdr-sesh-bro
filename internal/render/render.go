@@ -10,7 +10,10 @@
 // docs/BEHAVIOUR.md §9 for the catalogue.
 package render
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Reset and Dim are bash's $C_RESET and $C_DIM (sesh-bro lines 49-50).
 // Colours are emitted unconditionally throughout this package — sesh-bro
@@ -120,7 +123,33 @@ func FormatRow(kind Kind, target, status, label, detail string, icons Icons) (st
 		return "", fmt.Errorf("render: unknown row kind %q", kind)
 	}
 	icon := color + glyph + Reset
+	// A row is one TSV line, so any tab or newline inside label or detail
+	// fabricates a second, fully-formed row that fzf cannot distinguish from a
+	// real one.
+	//
+	// This existed in the bash too, where the worst it bought you was focusing
+	// the wrong workspace. The close action makes it destructive: a label
+	// carrying "\nworkspace\tw-PROD\t..." renders an innocuous-looking extra
+	// row whose close target is a workspace the user never saw. And labels are
+	// not all self-authored — the worktree path builds one from a GitHub issue
+	// title, which is text from a public repo.
+	//
+	// Stripped rather than rejected: a weird label should render oddly, not
+	// make the picker fail to list anything.
+	label = stripRowSeparators(label)
+	detail = stripRowSeparators(detail)
 	return fmt.Sprintf("%s\t%s\t%s %s %s\n", kind, target, icon, label, Dim+detail+Reset), nil
+}
+
+// stripRowSeparators replaces the characters that would end a row or a field.
+func stripRowSeparators(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '\t', '\n', '\r':
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 // GitSuffix formats the branch annotation bash's git-enrichment loop

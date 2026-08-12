@@ -102,6 +102,15 @@ type Options struct {
 	// aliasQuery.
 	Aliases string
 
+	// Keys is every fzf --bind key, resolved from SESH_BRO_KEY_<ACTION>
+	// (docs/COMPETITIVE-DEMAND.md #2) or the zero value when a caller
+	// doesn't set it. BuildArgs runs this through KeyBindings.resolved,
+	// which falls back to DefaultKeyBindings field-by-field for anything
+	// empty or malformed — so leaving Keys unset entirely (every existing
+	// caller, before this field existed) reproduces bash's six hardcoded
+	// binds exactly, plus Feature A's new Close bind at its own default.
+	Keys KeyBindings
+
 	// Stderr receives both this package's own diagnostics ("sesh-bro: fzf
 	// is required", "sesh-bro: failed to connect to <kind> <target>") and
 	// fzf's own inherited stderr (its TUI paints via /dev/tty, not stdout
@@ -157,6 +166,156 @@ func sanitizeWidth(pw string) string {
 		return pw
 	}
 	return "60%"
+}
+
+// KeyBindings is every fzf --bind key sesh-bro assigns to an action, one
+// field per action bash hardcoded (sesh-bro:558-563) plus Close, which bash
+// never had. This is Feature B (docs/COMPETITIVE-DEMAND.md #2, Navigator
+// issues/26 — "unmet by every competitor... the one item where we could
+// lead rather than catch up"): every field here is overridable via
+// SESH_BRO_KEY_<ACTION> (internal/config.Config.Keys resolves the env var
+// plus default; this package resolves "present but malformed" — see
+// resolved). A zero-value KeyBindings (every caller before this feature
+// existed) resolves to DefaultKeyBindings in full.
+type KeyBindings struct {
+	Workspaces string // reload: workspaces only.
+	Agents     string // reload: agents only.
+	Blocked    string // reload: blocked agents only.
+	Dirs       string // reload: directories only.
+	All        string // reload: all sources.
+	Create     string // execute-silent create, then reload.
+	// Close is Feature A's new bind (docs/COMPETITIVE-DEMAND.md #1: "Close /
+	// remove a workspace from the picker" — four independent competitor
+	// plugins converge on this, sesh-bro had none). execute-silent close on
+	// the highlighted row, then reload, the same shape as Create.
+	Close string
+}
+
+// DefaultKeyBindings is the key assigned to each action when Options.Keys
+// leaves a field unset or KeyBindings.resolved's guard rejects it: bash's
+// six literal binds (sesh-bro:558-563: ctrl-w/e/b/x/o/-slash), plus alt-x
+// for Close.
+//
+// Close is NOT on ctrl-q, which an earlier version chose by checking this
+// picker's own six binds and forgetting fzf's. fzf documents four default
+// abort keys — ctrl-c, ctrl-g, ctrl-q, esc — so binding a silent,
+// irreversible workspace close to one of them means the keystroke fzf itself
+// trains users to press for "get me out of here" destroys a workspace and
+// every agent running in it, with execute-silent swallowing any message.
+//
+// alt-x is deliberately awkward: this is the one action here that cannot be
+// undone, and a modifier that is hard to hit by accident is the point.
+var DefaultKeyBindings = KeyBindings{
+	Workspaces: "ctrl-w",
+	Agents:     "ctrl-e",
+	Blocked:    "ctrl-b",
+	Dirs:       "ctrl-x",
+	All:        "ctrl-o",
+	Create:     "ctrl-/",
+	Close:      "alt-x",
+}
+
+// validKey reports whether a SESH_BRO_KEY_* override is a key fzf will
+// actually accept.
+//
+// An earlier version allowed anything shaped like [A-Za-z0-9][A-Za-z0-9_/-]*,
+// which is a guard against splicing (":" would append a second ACTION, ","
+// another key spec) but says nothing about fzf's key grammar. Measured against
+// fzf 0.74.2, "shift-a", "zzz", "f25", "ctrl-ww" and "alt-" all pass that
+// shape and all make fzf exit 2 with "unsupported key" — and because Run
+// deliberately swallows exec failures, the picker then flashes and vanishes
+// with exit 0 and no diagnostic anywhere the user can see. One typo in one env
+// var makes the picker unopenable and unexplainable, which is exactly the
+// failure the fallback-to-default rule exists to prevent.
+//
+// So match fzf's real grammar instead of a character class.
+func validKey(k string) bool {
+	if k == "" {
+		return false
+	}
+	switch {
+	case namedKeys[k]:
+		return true
+	case strings.HasPrefix(k, "ctrl-"):
+		return isSingleKeyChar(k[len("ctrl-"):])
+	case strings.HasPrefix(k, "alt-"):
+		return isSingleKeyChar(k[len("alt-"):])
+	case fnKeyRe.MatchString(k):
+		return true
+	}
+	// A single literal character is a valid fzf key.
+	return len([]rune(k)) == 1 && !strings.ContainsAny(k, ":,()")
+}
+
+// isSingleKeyChar reports whether s is one character a modifier may apply to.
+func isSingleKeyChar(s string) bool {
+	r := []rune(s)
+	return len(r) == 1 && !strings.ContainsAny(s, ":,()")
+}
+
+// fnKeyRe matches f1 through f12. fzf accepts up to f24 on some terminals, but
+// nothing above f12 is reliably deliverable, and a key that silently never
+// fires is its own bug.
+var fnKeyRe = regexp.MustCompile(`^f([1-9]|1[0-2])$`)
+
+// namedKeys is fzf's set of spelled-out keys, which no pattern captures.
+var namedKeys = map[string]bool{
+	"tab": true, "shift-tab": true, "enter": true, "return": true,
+	"space": true, "bspace": true, "bs": true, "del": true, "delete": true,
+	"home": true, "end": true, "pgup": true, "page-up": true,
+	"pgdn": true, "page-down": true, "insert": true,
+	"up": true, "down": true, "left": true, "right": true,
+	"shift-up": true, "shift-down": true, "shift-left": true, "shift-right": true,
+	"double-click": true, "left-click": true, "right-click": true,
+}
+
+// sanitizeKey guards one SESH_BRO_KEY_* override: def is returned verbatim
+// unless val is non-empty AND validKey accepts it. The val == "" branch mirrors
+// sanitizeWidth's own "" -> default case, but in practice rarely fires here
+// — internal/config's Load already turns an unset/empty env var into the
+// same default before this ever sees it (two-layer default, exactly like
+// PreviewWidth); it only matters for a caller that builds Options directly
+// without going through config.Load, e.g. this package's own tests.
+func sanitizeKey(val, def string) string {
+	if val != "" && validKey(val) {
+		return val
+	}
+	return def
+}
+
+// resolved applies sanitizeKey to every field against DefaultKeyBindings,
+// once, so BuildArgs does not repeat the same seven-way fallback inline.
+func (k KeyBindings) resolved() KeyBindings {
+	return KeyBindings{
+		Workspaces: sanitizeKey(k.Workspaces, DefaultKeyBindings.Workspaces),
+		Agents:     sanitizeKey(k.Agents, DefaultKeyBindings.Agents),
+		Blocked:    sanitizeKey(k.Blocked, DefaultKeyBindings.Blocked),
+		Dirs:       sanitizeKey(k.Dirs, DefaultKeyBindings.Dirs),
+		All:        sanitizeKey(k.All, DefaultKeyBindings.All),
+		Create:     sanitizeKey(k.Create, DefaultKeyBindings.Create),
+		Close:      sanitizeKey(k.Close, DefaultKeyBindings.Close),
+	}
+}
+
+// keyLabel renders a resolved bind key for the --header hint text: a
+// "ctrl-X" key where X is exactly one character shortens to bash's own
+// caret notation (sesh-bro:555: "^w workspaces", "^/ create") since that IS
+// every DefaultKeyBindings value's natural display form; anything else (an
+// alt-* bind, a function key, a bare letter with no ctrl- prefix, ...) is
+// shown verbatim, since there is no established shorthand for those.
+//
+// Making the header track the ACTUAL resolved key, rather than staying
+// hardcoded to bash's six literals the way preview headers ignore
+// SESH_BRO_ICON_* (BEHAVIOUR.md §9 S12), is a deliberate divergence from
+// that precedent: an icon override is cosmetic, but a header hint naming a
+// key that no longer does anything — because SESH_BRO_KEY_CLOSE moved it
+// elsewhere — would actively mislead the user standing in front of the
+// picker, which is a worse failure than the one S12 accepts.
+func keyLabel(key string) string {
+	if rest, ok := strings.CutPrefix(key, "ctrl-"); ok && len(rest) == 1 {
+		return "^" + rest
+	}
+	return key
 }
 
 // bashSplitColon reproduces `IFS=':' read -r -a pairs <<< "$s"` field
@@ -221,6 +380,7 @@ func BuildArgs(opts Options) []string {
 	}
 	pw := sanitizeWidth(opts.PreviewWidth)
 	query := aliasQuery(opts.Aliases)
+	keys := opts.Keys.resolved()
 
 	args := []string{
 		"--ansi",
@@ -235,8 +395,15 @@ func BuildArgs(opts Options) []string {
 		// Trailing space in the prompt is part of it (sesh-bro:554).
 		"--prompt=sesh> ",
 		// U+00B7 MIDDLE DOT between clauses, copied verbatim from
-		// sesh-bro:555.
-		"--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all · ^/ create",
+		// sesh-bro:555, extended with Feature A's close action and built
+		// from the RESOLVED keys rather than bash's hardcoded literals —
+		// see keyLabel's doc comment for why this header must stay truthful
+		// under SESH_BRO_KEY_* overrides where the preview headers don't.
+		fmt.Sprintf(
+			"--header=enter connect · %s workspaces · %s agents · %s blocked · %s dirs · %s all · %s close · %s create",
+			keyLabel(keys.Workspaces), keyLabel(keys.Agents), keyLabel(keys.Blocked),
+			keyLabel(keys.Dirs), keyLabel(keys.All), keyLabel(keys.Close), keyLabel(keys.Create),
+		),
 	}
 	if opts.PreviewEnabled {
 		// Bare {1} {2} — fzf single-quotes each {n} placeholder itself
@@ -258,12 +425,23 @@ func BuildArgs(opts Options) []string {
 		// (BEHAVIOUR.md §3.3: "the reload string still contains the
 		// trailing space... Harmless to the shell; a Go port emitting the
 		// same strings byte-for-byte is safest.").
-		fmt.Sprintf("--bind=ctrl-w:reload(%s list --workspaces %s)", selfQ, hide),
-		fmt.Sprintf("--bind=ctrl-e:reload(%s list --agents %s)", selfQ, hide),
-		fmt.Sprintf("--bind=ctrl-b:reload(%s list --blocked %s)", selfQ, hide),
-		fmt.Sprintf("--bind=ctrl-x:reload(%s list --dirs %s)", selfQ, hide),
-		fmt.Sprintf("--bind=ctrl-o:reload(%s list %s)", selfQ, hide),
-		fmt.Sprintf("--bind=ctrl-/:execute-silent(%s create)+reload(%s list %s)", selfQ, selfQ, hide),
+		// Close is emitted BEFORE every navigation bind on purpose. fzf's
+		// last-bind-wins means a collision — SESH_BRO_KEY_CLOSE=ctrl-w, a
+		// plausible preference or a copy-paste slip — would otherwise make a
+		// navigation key silently destructive while the header still
+		// advertises both. Emitted first, a collision costs the user their
+		// close key and leaves the navigation key doing the harmless thing.
+		//
+		// {1} {2} hand `close` the highlighted row's type and target, exactly
+		// as the --preview bind does. No --multi: highlighted-versus-selected
+		// cannot then diverge for an irreversible action.
+		fmt.Sprintf("--bind=%s:execute-silent(%s close {1} {2})+reload(%s list %s)", keys.Close, selfQ, selfQ, hide),
+		fmt.Sprintf("--bind=%s:reload(%s list --workspaces %s)", keys.Workspaces, selfQ, hide),
+		fmt.Sprintf("--bind=%s:reload(%s list --agents %s)", keys.Agents, selfQ, hide),
+		fmt.Sprintf("--bind=%s:reload(%s list --blocked %s)", keys.Blocked, selfQ, hide),
+		fmt.Sprintf("--bind=%s:reload(%s list --dirs %s)", keys.Dirs, selfQ, hide),
+		fmt.Sprintf("--bind=%s:reload(%s list %s)", keys.All, selfQ, hide),
+		fmt.Sprintf("--bind=%s:execute-silent(%s create)+reload(%s list %s)", keys.Create, selfQ, selfQ, hide),
 	)
 	return args
 }
