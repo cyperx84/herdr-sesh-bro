@@ -121,7 +121,7 @@ func cmdWorktree(ctx context.Context, env *appEnv, args []string) int {
 		return 1
 	}
 
-	client, openErr := openHerdr()
+	client, openErr := openHerdr(env.getenv)
 
 	// 24h gh-title cache (BEHAVIOUR.md §2.7). Cache dir: $HERDR_PLUGIN_STATE_DIR,
 	// else $TMPDIR-or-/tmp/sesh-bro-<uid> (sesh-bro:405).

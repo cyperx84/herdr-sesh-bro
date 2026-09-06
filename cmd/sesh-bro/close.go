@@ -3,7 +3,7 @@
 // cite; every comment in this file explains a DECISION, not a source line,
 // because there is no bash line to reproduce.
 //
-// Wired into the picker as the ctrl-q (default; SESH_BRO_KEY_CLOSE
+// Wired into the picker as the alt-x (default; SESH_BRO_KEY_CLOSE
 // overrides it — see internal/picker.KeyBindings and config.Config.Keys)
 // execute-silent+reload bind, the exact same shape internal/picker already
 // uses for ctrl-/ create: fzf shells out to `<self> close {1} {2}`,
@@ -31,7 +31,7 @@ func cmdClose(ctx context.Context, env *appEnv, args []string) int {
 		fmt.Fprintln(env.stderr, "sesh-bro: close: missing TYPE/TARGET arguments")
 		return 1
 	}
-	client, openErr := openHerdr()
+	client, openErr := openHerdr(env.getenv)
 	if err := closeRow(ctx, env, client, openErr, args[0], args[1]); err != nil {
 		return 1
 	}
@@ -39,7 +39,7 @@ func cmdClose(ctx context.Context, env *appEnv, args []string) int {
 }
 
 // closeRow is close's actual dispatch, shared between cmdClose and the
-// picker's ctrl-q bind (both ultimately invoke the compiled binary as
+// picker's alt-x bind (both ultimately invoke the compiled binary as
 // `close TYPE TARGET` — there is exactly one entry point, see cmdClose's
 // doc comment).
 //

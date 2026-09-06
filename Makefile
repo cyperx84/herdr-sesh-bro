@@ -1,16 +1,27 @@
 SHELL := bash
 
-# Prefer vendored tools (tools/) so `make check` works even when Homebrew is
-# unavailable; fall back to system-installed shellcheck/bats (e.g. in CI).
-SHELLCHECK := $(or $(wildcard tools/bin/shellcheck),shellcheck)
-BATS := $(or $(wildcard tools/bin/bats),bats)
-
-.PHONY: lint test check
-
+# shellcheck is only needed for scripts/build.sh now — the bash
+# implementation and its bats harness are gone (0.4.0; see
+# docs/BEHAVIOUR.md §0 for where the old tests/ harness lives). The
+# vendored tools/ copy went with them, so a system shellcheck is required
+# for `make lint`; CI installs it explicitly.
+# Skip rather than fail when shellcheck is absent: it lints one 40-line
+# script, so a missing linter must not block `make check` on a fresh
+# checkout. CI installs shellcheck explicitly, so the skip never hides a
+# real finding there.
 lint:
-	$(SHELLCHECK) sesh-bro tests/mock-herdr tests/mock-bin/zoxide
+	@if command -v shellcheck >/dev/null 2>&1; then \
+		shellcheck scripts/build.sh; \
+	else \
+		echo "make: shellcheck not installed - skipping lint (CI runs it)"; \
+	fi
 
-test:
-	$(BATS) tests
+# gotest is the real gate: vet + the full Go test suite, which includes
+# the fake-herdr-socket tests (internal/herdrx/herdrtest), so it needs no
+# live daemon.
+gotest:
+	go vet ./... && go test ./...
 
-check: lint test
+.PHONY: lint gotest check
+
+check: lint gotest

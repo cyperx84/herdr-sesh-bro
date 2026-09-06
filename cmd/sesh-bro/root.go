@@ -21,7 +21,7 @@ func cmdRoot(ctx context.Context, env *appEnv) int {
 		return 1
 	}
 
-	client, openErr := openHerdr()
+	client, openErr := openHerdr(env.getenv)
 	cfg := config.Load(env.getenv)
 	// BEHAVIOUR.md §2.6: UNLIKE `connect dir`, this pane_list call is NOT
 	// `2>/dev/null`-guarded in bash — a cache/daemon failure message leaks

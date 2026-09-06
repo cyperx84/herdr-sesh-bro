@@ -34,7 +34,7 @@ func TestLoad_Defaults(t *testing.T) {
 		KeyDirs:       "ctrl-x",
 		KeyAll:        "ctrl-o",
 		KeyCreate:     "ctrl-/",
-		KeyClose:      "ctrl-q",
+		KeyClose:      "alt-x",
 	}
 	got := Config{
 		PreviewWidth:  c.PreviewWidth,
@@ -314,11 +314,28 @@ func TestLoad_KeyEmptyValueFallsBackToDefault(t *testing.T) {
 		"SESH_BRO_KEY_CLOSE":  "",
 		"SESH_BRO_KEY_CREATE": "",
 	}))
-	if c.KeyClose != "ctrl-q" {
-		t.Errorf("KeyClose = %q, want default ctrl-q", c.KeyClose)
+	if c.KeyClose != "alt-x" {
+		t.Errorf("KeyClose = %q, want default alt-x", c.KeyClose)
 	}
 	if c.KeyCreate != "ctrl-/" {
 		t.Errorf("KeyCreate = %q, want default ctrl-/", c.KeyCreate)
+	}
+}
+
+// TestLoad_KeyCloseDefaultAgreesWithPicker pins this package's close-key
+// default to internal/picker's. The two drifted apart exactly once — config
+// said ctrl-q, picker said alt-x — and shipped the bug this fix closes: the
+// config value wins at runtime (ctrl-q passes picker's validKey), and since
+// ctrl-q is one of fzf's four default abort keys, the very keystroke fzf
+// trains users to press for "get me out of here" silently closed a
+// workspace (see picker.DefaultKeyBindings's own comment for the original
+// reasoning). Two defaults for the same key with no test relating them is
+// how that shipped; this is the test that makes the next drift a failure,
+// not a release note.
+func TestLoad_KeyCloseDefaultAgreesWithPicker(t *testing.T) {
+	c := Load(envMap(map[string]string{}))
+	if c.KeyClose != picker.DefaultKeyBindings.Close {
+		t.Errorf("config KeyClose default = %q, but picker.DefaultKeyBindings.Close = %q — the two packages' close-key defaults have drifted; they must be changed together (or better, only here — the picker keeps its own copy because BuildArgs must work without config)", c.KeyClose, picker.DefaultKeyBindings.Close)
 	}
 }
 

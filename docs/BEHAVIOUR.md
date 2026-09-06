@@ -25,6 +25,11 @@ Non-obvious claims carry a provenance tag:
 | `[code]` | Read directly off the bash; no execution needed to establish it. |
 | `[UNVERIFIED]` | Stated behaviour is inferred and **not** confirmed. Flagged individually; each carries the experiment that would settle it. |
 
+The `[mock]` tags refer to the bash harness (`tests/mock-herdr` +
+`tests/sesh-bro.bats`) as it existed at commit `0d683a3`; that harness was
+deleted in 0.4.0 (the Go binary speaks the socket, so a CLI mock cannot
+drive it) and the tags still resolve via git history.
+
 ### Notation
 
 - `ESC` is the byte `0x1B`. ANSI sequences are written `ESC[0m` and appear in output as

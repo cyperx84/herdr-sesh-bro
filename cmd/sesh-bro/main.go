@@ -228,7 +228,7 @@ commands:
   list   [flags]     print picker candidates (type, target, display)
   connect TYPE TARGET
                      focus a workspace/agent, or create a workspace for a dir
-  close TYPE TARGET  close a workspace (workspace rows only; picker ctrl-q)
+  close TYPE TARGET  close a workspace (workspace rows only; picker alt-x)
   create [PATH]      create a workspace for a directory (default: current dir)
   preview TYPE TARGET
                      render the preview used by the picker

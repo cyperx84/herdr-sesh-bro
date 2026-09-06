@@ -35,6 +35,16 @@ func (a constAliver) Alive(context.Context) bool { return bool(a) }
 //     herdrcalls.go, which turn "couldn't dial" into the exact same failure
 //     those commands report for any other herdr-call error.
 //
+// getenv is the getenv run() already threads through every subcommand
+// (appEnv.getenv — normally os.Getenv), NOT a new seam: resolving
+// HERDR_SOCKET_PATH through it means a command-level test injects the
+// tests-only fake socket server (internal/herdrx/herdrtest) through the
+// same fakeEnv every other env var uses, with no process-wide mutation.
+// For a real run the resolution is identity: HERDR_SOCKET_PATH set means
+// herdrx.OpenPath(path), unset means exactly today's behaviour
+// (herdrx.Open, which reads os.Getenv itself and fails with herdr-api's
+// own no-socket error — unchanged).
+//
 // herdr-api's Client.Open dials $HERDR_SOCKET_PATH only, with no fallback
 // (herdr-api client.go:118-124) — unlike bash's `herdr` CLI, which has its
 // own daemon-discovery mechanism independent of any single env var. Running
@@ -43,7 +53,10 @@ func (a constAliver) Alive(context.Context) bool { return bool(a) }
 // might have found the daemon another way. This is a real, load-bearing
 // divergence from herdr-api's own dependency, not an oversight in this
 // package — see the final report.
-func openHerdr() (*herdrx.Client, error) {
+func openHerdr(getenv func(string) string) (*herdrx.Client, error) {
+	if path := getenv("HERDR_SOCKET_PATH"); path != "" {
+		return herdrx.OpenPath(path)
+	}
 	return herdrx.Open()
 }
 

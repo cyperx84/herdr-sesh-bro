@@ -13,7 +13,7 @@ import (
 )
 
 func cmdStartup(ctx context.Context, env *appEnv) int {
-	client, openErr := openHerdr()
+	client, openErr := openHerdr(env.getenv)
 	if err := external.CheckDeps(ctx, env.herdrBin, aliverFor(client, openErr)); err != nil {
 		fmt.Fprintln(env.stderr, err)
 		return 1

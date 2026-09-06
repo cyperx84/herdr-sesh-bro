@@ -38,7 +38,7 @@ func cmdCreate(ctx context.Context, env *appEnv, args []string) int {
 	external.ZoxideAdd(ctx, path)
 	label := herdrx.Basename(path)
 
-	client, openErr := openHerdr()
+	client, openErr := openHerdr(env.getenv)
 	// sesh-bro:353: `"$HERDR" workspace create ... --focus >/dev/null` —
 	// note **stdout only** is discarded here; herdr's stderr passes
 	// through IN ADDITION to sesh-bro's own message (BEHAVIOUR.md §2.4).

@@ -1,35 +1,37 @@
 # Contributing
 
-Thanks for wanting to improve sesh-bro! This project is a single bash script
-plus a Herdr manifest, so the bar to contribute is low.
+Thanks for wanting to improve sesh-bro! This project is a Go binary plus a
+Herdr manifest; the original bash implementation (and its bats harness)
+was removed in 0.4.0 and lives on in git history at commit `0d683a3`.
 
 ## Development setup
 
 ```sh
 git clone https://github.com/cyperx84/herdr-sesh-bro.git
 cd herdr-sesh-bro
-make check          # shellcheck + bats tests (vendored tools, no install needed)
+make check          # shellcheck scripts/build.sh + go vet + go test
 ```
+
+You need a Go toolchain (version per `go.mod`) and `shellcheck` for
+`make lint`. No live Herdr daemon is required to test — see below.
 
 ## What needs care
 
-- **`sesh-bro` runs under `set -euo pipefail`** — new code must be strict-mode
-  safe (guard array expansions, quote expansions, handle `$(...)` failures).
-- **Keep shellcheck clean** — `make lint` must pass. If a warning is a
-  deliberate pattern (e.g. glob matching in the blacklist), add a targeted
-  `# shellcheck disable` with a reason.
-- **Every new command/flag needs a bats test** — `tests/mock-herdr` and
-  `tests/mock-bin/zoxide` let you test without a live daemon. Extend the mock
-  when you touch the herdr API surface.
-- **Version lives only in `herdr-plugin.toml`** — the script reads it at
-  startup. Never hardcode a version in the script.
-
-## Feature ideas (unclaimed)
-
-- tmux session source (like sesh's `-t`)
-- per-entry `preview_command` config (sesh-style)
-- `--watch` live preview refresh
-- Windows support (would need a non-bash runtime)
+- **Command-level tests go through the `run()` seam** —
+  `run(args, stdin, out, err, getenv)` in `cmd/sesh-bro/main_test.go`.
+  Never spawn the compiled binary from a test; drive the command in
+  process and inject the environment with the `fakeEnv` helper.
+- **A fake herdr socket server exists** at `internal/herdrx/herdrtest`.
+  It speaks the same wire protocol as `github.com/cyperx84/herdr-api`'s
+  client, so a test can exercise real RPC paths by pointing
+  `HERDR_SOCKET_PATH` (through `fakeEnv`) at `herdrtest.Start(t)`.
+- **No new dependencies** — stdlib plus the existing
+  `github.com/cyperx84/herdr-api` only.
+- **Comments explain why, not what** — cite the `docs/BEHAVIOUR.md`
+  section (the behaviour oracle) or the demand source a behaviour comes
+  from, the way the existing code does.
+- **Version lives only in `herdr-plugin.toml`** — never hardcode a
+  version in the Go code.
 
 ## Releasing
 

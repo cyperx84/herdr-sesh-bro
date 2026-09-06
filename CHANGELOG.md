@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - Unreleased
+
+### Fixed
+- The `SESH_BRO_KEY_CLOSE` default was `ctrl-q` — one of fzf's four default
+  abort keys (`ctrl-c`, `ctrl-g`, `ctrl-q`, `esc`) — while the picker's own
+  default was `alt-x`, deliberately chosen for exactly that reason
+  (see `internal/picker.DefaultKeyBindings`). Config wins at runtime, so the
+  keystroke fzf trains users to press for "get me out of here" silently
+  closed a workspace, with `execute-silent` swallowing any message. The
+  default is now `alt-x` everywhere, and a regression test
+  (`TestLoad_KeyCloseDefaultAgreesWithPicker`) pins config's default to
+  `picker.DefaultKeyBindings.Close` so the two cannot drift apart again.
+
+### Changed
+- `min_herdr_version` raised from `0.8.0` to `0.8.2`: `popup.close` and
+  `session.snapshot` are only confirmed present in the 0.8.2 schema.
+
 ## [0.3.0] - 2026-08-11
 
 ### Changed

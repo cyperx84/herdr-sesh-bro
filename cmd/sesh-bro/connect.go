@@ -24,7 +24,7 @@ func cmdConnect(ctx context.Context, env *appEnv, args []string) int {
 		fmt.Fprintln(env.stderr, "sesh-bro: connect: missing TYPE/TARGET arguments")
 		return 1
 	}
-	client, openErr := openHerdr()
+	client, openErr := openHerdr(env.getenv)
 	if err := connect(ctx, env, client, openErr, args[0], args[1]); err != nil {
 		return 1
 	}

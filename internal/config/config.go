@@ -115,12 +115,17 @@ type Config struct {
 	// KeyClose are SESH_BRO_KEY_WORKSPACES/AGENTS/BLOCKED/DIRS/ALL/CREATE/
 	// CLOSE, raw, one per fzf --bind action (docs/COMPETITIVE-DEMAND.md #2).
 	// Defaults are the six key literals bash hardcoded (sesh-bro:558-563)
-	// plus ctrl-q for KeyClose, Feature A's new close bind — see
-	// internal/picker.DefaultKeyBindings, which these seven must keep
-	// agreeing with. Any string is accepted here, same as the icon fields;
-	// the guard against a value that would break fzf's --bind grammar is
-	// internal/picker's KeyBindings.resolved (sanitizeKey), applied where
-	// these are actually spliced into an argv element — not here. See Keys.
+	// plus alt-x for KeyClose — see internal/picker.DefaultKeyBindings,
+	// which these seven must keep agreeing with (and alt-x, not ctrl-q,
+	// is the deliberate choice there: ctrl-q is one of fzf's four default
+	// abort keys, so binding a silent, irreversible workspace close to it
+	// makes "get me out of here" destroy a workspace. This default
+	// disagreed with the picker's for one release and shipped exactly that
+	// bug — TestLoad_KeyCloseDefaultAgreesWithPicker pins the two). Any
+	// string is accepted here, same as the icon fields; the guard against a
+	// value that would break fzf's --bind grammar is internal/picker's
+	// KeyBindings.resolved (sanitizeKey), applied where these are actually
+	// spliced into an argv element — not here. See Keys.
 	KeyWorkspaces string
 	KeyAgents     string
 	KeyBlocked    string
@@ -185,7 +190,7 @@ func Load(getenv func(string) string) Config {
 		KeyDirs:           orDefault(getenv("SESH_BRO_KEY_DIRS"), "ctrl-x"),
 		KeyAll:            orDefault(getenv("SESH_BRO_KEY_ALL"), "ctrl-o"),
 		KeyCreate:         orDefault(getenv("SESH_BRO_KEY_CREATE"), "ctrl-/"),
-		KeyClose:          orDefault(getenv("SESH_BRO_KEY_CLOSE"), "ctrl-q"),
+		KeyClose:          orDefault(getenv("SESH_BRO_KEY_CLOSE"), "alt-x"),
 		previewEnabledRaw: orDefault(getenv("SESH_BRO_PREVIEW_ENABLED"), "1"),
 		hideCurrentRaw:    orDefault(getenv("SESH_BRO_HIDE_CURRENT"), "0"),
 		dirSourcesRaw:     orDefault(getenv("SESH_BRO_DIR_SOURCES"), "1"),

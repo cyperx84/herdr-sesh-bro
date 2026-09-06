@@ -74,6 +74,23 @@ func Open() (*Client, error) {
 	return New(c), nil
 }
 
+// OpenPath is Open's explicit-path counterpart: a Client dialing the socket
+// at path instead of the one the environment names. Production code never
+// needs it (herdr injects HERDR_SOCKET_PATH into every pane it spawns); it
+// exists so the command layer can resolve that variable through its own
+// threaded getenv seam and point at the tests-only fake server
+// (internal/herdrx/herdrtest) without mutating process-wide state — see
+// cmd/sesh-bro/herdrconn.go's openHerdr for the one production use. The
+// error return exists to mirror Open's signature (callers treat the two
+// uniformly); the only failure is an empty path, which would otherwise
+// silently dial herdr-api's no-socket error from a confusing call site.
+func OpenPath(path string) (*Client, error) {
+	if path == "" {
+		return nil, fmt.Errorf("herdrx: open: empty socket path")
+	}
+	return New(herdr.New(path)), nil
+}
+
 // Alive reports whether the herdr daemon responds. It matches the bash's
 // herdr_ok() literally (BEHAVIOUR.md §7.1): a workspace.list call, result
 // discarded. This is deliberately NOT a Ping/CheckProtocol call — the bash

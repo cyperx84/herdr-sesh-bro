@@ -12,15 +12,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install shellcheck and bats
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install shellcheck
         run: |
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             sudo apt-get update
-            sudo apt-get install -y shellcheck bats
+            sudo apt-get install -y shellcheck
           else
-            brew install shellcheck bats-core
+            brew install shellcheck
           fi
-      - name: Lint
-        run: make lint
-      - name: Test
-        run: make test
+      - name: Check
+        run: make check

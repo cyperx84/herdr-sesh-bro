@@ -16,7 +16,7 @@ sesh> alpha                                       ▲ 40%
 ● beta   claude · Rename arcade route  [feat/x]   │
 ▸ my-project  /Users/me/github/my-project         │
                                                   ▼
-enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all · ^q close · ^/ create
+enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all · alt-x close · ^/ create
 ```
 
 ## Features
@@ -38,7 +38,7 @@ enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all �
 - **Filter sources from inside fzf** — `^w` workspaces / `^e` agents / `^b`
   blocked / `^x` dirs / `^o` all reload the list; `^/` creates a workspace
   from a directory.
-- **Close a workspace from the picker** — `^q` closes the highlighted
+- **Close a workspace from the picker** — `alt-x` closes the highlighted
   workspace row and reloads the list in place; a no-op (never an error) on
   agent/dir rows and on the workspace the picker itself is running in.
 - **Current-first ordering** — the current workspace and its agents float to
@@ -128,7 +128,7 @@ sesh-bro worktree [URL]  # create/focus the workspace for a GitHub issue/PR
 | `^b` | reload: blocked agents only |
 | `^x` | reload: directories only |
 | `^o` | reload: all sources |
-| `^q` | close the highlighted **workspace** (no-op on agent/dir rows; refuses the current workspace) |
+| `alt-x` | close the highlighted **workspace** (no-op on agent/dir rows; refuses the current workspace) |
 | `^/` | create a new workspace from a directory |
 | `esc` | exit |
 
@@ -140,10 +140,13 @@ Every keybind above is overridable — see `SESH_BRO_KEY_*` in
 [Configuration](#configuration). The picker's header hint always reflects
 whatever key is actually bound, not the defaults shown here.
 
-`^q` only closes workspace rows. Selecting an agent or zoxide-directory row
-and pressing `^q` prints a message and does nothing — it never errors out
+`alt-x` only closes workspace rows. Selecting an agent or zoxide-directory row
+and pressing `alt-x` prints a message and does nothing — it never errors out
 of the picker. Closing the workspace the picker itself is running in is
-refused the same way, since that would kill the picker mid-action.
+refused the same way, since that would kill the picker mid-action. (The close
+key is deliberately a modifier chord, not a bare ctrl key: ctrl-q is one of
+fzf's four default abort keys, so the "get me out of here" keystroke must
+not be the one that silently closes a workspace.)
 
 ### Flags
 
@@ -177,7 +180,7 @@ schema exposes. Set them in your shell, or via Herdr's config UI:
 | `SESH_BRO_KEY_BLOCKED` | `ctrl-b` | Reload: blocked agents only |
 | `SESH_BRO_KEY_DIRS` | `ctrl-x` | Reload: directories only |
 | `SESH_BRO_KEY_ALL` | `ctrl-o` | Reload: all sources |
-| `SESH_BRO_KEY_CLOSE` | `ctrl-q` | Close the highlighted workspace |
+| `SESH_BRO_KEY_CLOSE` | `alt-x` | Close the highlighted workspace |
 | `SESH_BRO_KEY_CREATE` | `ctrl-/` | Create a workspace from a directory |
 | `SESH_BRO_ALIASES` | *(empty)* | `alias=label:alias2=label2` prefill queries |
 
@@ -262,15 +265,17 @@ the three. Tmux sessions could be added later (like sesh).
 ## Development
 
 ```sh
-make lint    # shellcheck sesh-bro + test helpers
-make test    # bats smoke tests (mock herdr, no live daemon needed)
+make lint    # shellcheck scripts/build.sh
+make gotest  # go vet ./... && go test ./...
 make check   # both
 ```
 
-Tests run against `tests/mock-herdr` and a stubbed `zoxide`, so they work
-without a running Herdr. CI runs the same targets on GitHub Actions (Linux +
-macOS). Releasing: tag `vX.Y.Z` matching `herdr-plugin.toml`; the release
-workflow builds the GitHub Release from `CHANGELOG.md`.
+Tests run against a fake herdr socket server (`internal/herdrx/herdrtest`,
+which speaks the same wire protocol as `github.com/cyperx84/herdr-api`'s
+client), so they work without a running Herdr. CI runs the same targets on
+GitHub Actions (Linux + macOS). Releasing: tag `vX.Y.Z` matching
+`herdr-plugin.toml`; the release workflow builds the GitHub Release from
+`CHANGELOG.md`.
 
 ## License
 

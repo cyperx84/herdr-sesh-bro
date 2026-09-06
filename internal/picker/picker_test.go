@@ -11,8 +11,9 @@ import (
 // TestBuildArgs_Default pins the exact argv for the common case: preview
 // on, default width, no hide-current, no alias, default (unset) keys —
 // every element in bash's exact order for the six ported binds
-// (sesh-bro:536-564, BEHAVIOUR.md §3.1), plus Feature A's new ctrl-q close
-// bind and the header's "· alt-x close" clause
+// (sesh-bro:536-564, BEHAVIOUR.md §3.1), plus Feature A's new close bind
+// (alt-x — deliberately not an fzf abort key; see DefaultKeyBindings) and
+// the header's “· alt-x close” clause
 // (docs/COMPETITIVE-DEMAND.md #1).
 func TestBuildArgs_Default(t *testing.T) {
 	got := BuildArgs(Options{

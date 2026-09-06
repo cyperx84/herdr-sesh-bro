@@ -26,7 +26,7 @@ func cmdPreview(ctx context.Context, env *appEnv, args []string) int {
 		return 1
 	}
 	kind, target := args[0], args[1]
-	client, openErr := openHerdr()
+	client, openErr := openHerdr(env.getenv)
 
 	switch kind {
 	case "workspace":

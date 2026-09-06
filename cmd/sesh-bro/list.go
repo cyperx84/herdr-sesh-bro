@@ -114,7 +114,7 @@ func listOutput(ctx context.Context, env *appEnv, args []string, w io.Writer) er
 		return &listFlagError{err}
 	}
 
-	client, openErr := openHerdr()
+	client, openErr := openHerdr(env.getenv)
 	if err := external.CheckListDeps(ctx, env.herdrBin, aliverFor(client, openErr)); err != nil {
 		return err
 	}

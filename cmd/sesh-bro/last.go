@@ -11,7 +11,7 @@ import (
 )
 
 func cmdLast(ctx context.Context, env *appEnv) int {
-	client, openErr := openHerdr()
+	client, openErr := openHerdr(env.getenv)
 	current := herdrx.CurrentWorkspaceID(env.getenv("HERDR_WORKSPACE_ID"), env.getenv("HERDR_PLUGIN_CONTEXT_JSON"))
 	// BEHAVIOUR.md §9 S2: when current == "" (no $HERDR_WORKSPACE_ID —
 	// running outside a herdr pane), nothing is excluded and the already-

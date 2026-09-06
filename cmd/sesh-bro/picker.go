@@ -98,7 +98,7 @@ func cmdPicker(ctx context.Context, env *appEnv, args []string) int {
 		Stderr:         env.stderr,
 	}
 	connector := func(kind, target string) error {
-		client, openErr := openHerdr()
+		client, openErr := openHerdr(env.getenv)
 		return connect(ctx, env, client, openErr, kind, target)
 	}
 
