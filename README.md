@@ -160,6 +160,33 @@ not be the one that silently closes a workspace.)
 - `--hide-current` — drop the current workspace and its agents from the list
 - `--json` — machine-readable output (`list` only)
 
+## How long has it been waiting
+
+Blocked and done rows carry their age:
+
+```
+● claude  claude · Progress check · 9m
+● review  codex · Waiting for approval · 42s
+```
+
+herdr exposes no timestamp for a status change, so sesh-bro times it itself
+from a `[[events]]` hook — herdr runs a plugin command per event, and those fire
+for every pane with no registration, so this costs one short-lived process per
+state change rather than a background daemon. State lives in
+`$HERDR_PLUGIN_STATE_DIR/state.json`.
+
+Two deliberate rules: `done` → `idle` does **not** reset the clock, because
+glancing at a finished agent should not erase how long it waited; and if the
+recorded status disagrees with the live one, the badge is omitted rather than
+shown from a stale start time.
+
+Badges appear only on blocked and done rows, where the number changes what you
+do, and never in `--json`.
+
+The same recording makes `sesh-bro last` a real most-recently-used jump. It
+used to focus the highest-numbered *other* workspace, which is "previous" only
+when you have two of them.
+
 ## The same key opens and closes it
 
 Whatever chord you bind to `sesh-bro.open` is now a toggle. herdr refuses to

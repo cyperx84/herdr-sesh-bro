@@ -7,7 +7,10 @@ picker/sessionizer repo, and joshmedeski/sesh (our direct inspiration).
 
 ## Already ours — ruled out as candidates
 
-MRU `last` toggle (matches herdr#665, 13 upvotes), blocked→working→done→idle sort, git
+MRU `last` toggle (matches herdr#665, 13 upvotes) — NOTE (0.4.0): this was
+listed here as already shipped and was not. `last` picked the highest-numbered
+OTHER workspace, which is "previous" only when you have two. It became a real
+MRU in 0.4.0 via the `[[events]]` hook (docs/BEHAVIOUR.md §10.8), blocked→working→done→idle sort, git
 branch + dirty marker, GitHub issue/PR → workspace link handler with 24h-cached title,
 `root`, blacklist, aliases-as-prefill, configurable sort_order, zoxide dirs with eza
 preview.

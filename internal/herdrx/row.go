@@ -44,6 +44,10 @@ type Row struct {
 	Status string // agent_status, "unknown", or dirStatus for RowDir.
 	Label  string
 	Detail string
+	// PaneID is the agent's pane, empty for workspace and dir rows. Target
+	// cannot serve here: it is the agent NAME when one exists, and the
+	// recorded time-in-state is keyed by pane.
+	PaneID string
 }
 
 // NormalizeStatus maps an absent/empty agent_status to "unknown", matching
@@ -243,6 +247,35 @@ func AgentRows(agents []Agent, current, hide string, statusFilter []herdr.AgentS
 			Status: string(a.Status),
 			Label:  agentLabel(a),
 			Detail: agentDetail(a),
+			PaneID: a.PaneID,
+		}
+	}
+	return rows
+}
+
+// WithAges appends a time-in-state badge to the agent rows that have one.
+//
+// Only blocked and done rows get it, and that restraint is the point. Those
+// are the states where the number changes what you do: an agent blocked for
+// nine minutes is a different situation from one blocked for nine seconds, and
+// an idle session left for three hours may be burning a prompt cache (herdr
+// discussion #707). A badge on every working row would be noise competing with
+// the two rows that matter.
+//
+// ages is keyed by pane id, which is why Row carries one: the target is a
+// name when the agent has one, and names are not stable identifiers for this.
+// A row with no entry is left exactly as it was, so a missed transition costs
+// a badge rather than showing a wrong one.
+func WithAges(rows []Row, ages map[string]string) []Row {
+	if len(ages) == 0 {
+		return rows
+	}
+	for i := range rows {
+		if rows[i].Type != RowAgent || !isAttentionStatus(rows[i].Status) {
+			continue
+		}
+		if age, ok := ages[rows[i].PaneID]; ok && age != "" {
+			rows[i].Detail += " · " + age
 		}
 	}
 	return rows

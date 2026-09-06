@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - Unreleased
 
 ### Added
+- **Time-in-state badges.** Blocked and done rows show how long they have been
+  waiting (`claude · Progress check · 9m`). herdr exposes no status timestamp —
+  discussions #707 (7 upvotes, "such a killer feature") and #3619 both ask for
+  one — so sesh-bro times it from a `[[events]]` hook, which herdr invokes per
+  event for every pane with no per-pane registration. That is one short-lived
+  process per state change rather than a resident daemon. `done` → `idle` does
+  NOT reset the clock, since looking at a finished agent should not erase how
+  long it waited; a recorded status that disagrees with the live one yields no
+  badge rather than a wrong one.
+- **`last` is a real most-recently-used jump.** It previously focused the
+  highest-numbered OTHER workspace, which is "previous" only when you have two
+  — `docs/FEATURE-DEMAND.md` listed this as already shipped and it was not. The
+  same hook records `workspace.focused`, so there is now a real history; with
+  none recorded yet the old rule remains the fallback.
 - **The picker updates while it is open.** A subscription to herdr's events
   drives a re-render and a `reload` pushed into the running fzf over its
   `--listen` unix socket — no polling, so a quiet session costs nothing. The

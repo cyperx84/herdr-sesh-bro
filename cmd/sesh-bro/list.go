@@ -12,9 +12,11 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	herdr "github.com/cyperx84/herdr-api"
 
+	"github.com/cyperx84/herdr-sesh-bro/internal/attention"
 	"github.com/cyperx84/herdr-sesh-bro/internal/config"
 	"github.com/cyperx84/herdr-sesh-bro/internal/external"
 	"github.com/cyperx84/herdr-sesh-bro/internal/herdrx"
@@ -124,6 +126,10 @@ type listSources struct {
 	hide    string // workspace id to omit, "" to omit nothing
 	zoxide  []string
 	git     *external.GitCache
+	// state is what the [[events]] hook recorded: when each agent entered
+	// its status, for the time-in-state badges. Empty when nothing has been
+	// recorded yet, which costs badges and nothing else.
+	state attention.State
 }
 
 // loadSources performs every read `list` needs: one session.snapshot, plus
@@ -148,7 +154,7 @@ func loadSources(ctx context.Context, env *appEnv, cfg config.Config, flags list
 		return listSources{}, err
 	}
 
-	src := listSources{snap: snap, git: external.NewGitCache()}
+	src := listSources{snap: snap, git: external.NewGitCache(), state: attention.Load(statePath(env.getenv))}
 
 	src.current = herdrx.CurrentWorkspaceID(env.getenv("HERDR_WORKSPACE_ID"), env.getenv("HERDR_PLUGIN_CONTEXT_JSON"))
 	if src.current == "" {
@@ -204,6 +210,12 @@ func renderRows(ctx context.Context, cfg config.Config, flags listFlags, src lis
 	}
 	if flags.wantAgent {
 		agRows = herdrx.AgentRows(src.snap.Agents, src.current, src.hide, flags.statuses)
+		// JSON output stays machine-shaped: a badge is a display affordance,
+		// and an age baked into a detail string is not something a consumer
+		// should have to parse back out.
+		if !flags.asJSON {
+			agRows = herdrx.WithAges(agRows, ageBadges(src, time.Now()))
+		}
 	}
 
 	var dirRows []herdrx.Row
@@ -393,4 +405,22 @@ func writeJSONRows(w io.Writer, rows []herdrx.Row) {
 			Detail: r.Detail,
 		})
 	}
+}
+
+// ageBadges maps pane id to a rendered time-in-state, for the rows that show
+// one. A pane whose recorded status disagrees with the live snapshot is
+// skipped by attention.Since: the hook missed a transition, and a badge from a
+// stale start time would be confidently wrong.
+func ageBadges(src listSources, now time.Time) map[string]string {
+	if len(src.state.Panes) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(src.snap.Agents))
+	for _, a := range src.snap.Agents {
+		status := string(herdrx.NormalizeStatus(a.Status))
+		if d, ok := attention.Since(src.state, a.PaneID, status, now); ok {
+			out[a.PaneID] = attention.FormatAge(d)
+		}
+	}
+	return out
 }

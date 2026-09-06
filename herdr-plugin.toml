@@ -1,6 +1,6 @@
 id = "sesh-bro"
 name = "Sesh Bro"
-version = "0.3.0"
+version = "0.4.0"
 min_herdr_version = "0.8.2"
 # 0.8.2 is the floor because popup.close and session.snapshot are only
 # confirmed present in the 0.8.2 API schema — the popup toggle (0.4.0) and
@@ -104,6 +104,25 @@ id = "worktree"
 title = "Open GitHub issue/PR worktree"
 contexts = ["workspace"]
 command = ["./bin/sesh-bro", "worktree"]
+
+# Record when each agent entered its state, and which workspaces you visited.
+#
+# herdr exposes no timestamp for a status change (discussions #707, #3619), so
+# "blocked for 9m" has to be timed locally by noticing the transition. These
+# hooks fire for EVERY pane with no per-pane registration — unlike
+# events.subscribe, whose status subscription requires a pane_id — so this
+# costs one short-lived process per state change rather than a resident daemon.
+#
+# `on` must be the DOTTED name. The underscored spelling is rejected with a
+# non-fatal warning in `herdr plugin list --json` and the hook silently never
+# fires, which is a very quiet way to lose a feature.
+[[events]]
+on = "pane.agent_status_changed"
+command = ["./bin/sesh-bro", "record-event"]
+
+[[events]]
+on = "workspace.focused"
+command = ["./bin/sesh-bro", "record-event"]
 
 # Ctrl-click a GitHub issue/PR URL in any pane: create or focus the worktree
 # workspace for that issue. Parses HERDR_PLUGIN_CLICKED_URL in the command.

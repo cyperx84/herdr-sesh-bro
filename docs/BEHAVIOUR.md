@@ -1738,6 +1738,58 @@ Two details that look like details and are not:
   closed the popup between herdr's refusal and this call, which is the state
   the user was asking for.
 
+### 10.8 Time-in-state badges, and `last` becomes a real MRU
+
+*Supersedes §2.5 and §9 S2, and closes the gap `docs/FEATURE-DEMAND.md` left
+open.*
+
+Blocked and done agent rows now carry how long they have been that way
+(`claude · Progress check · 9m`), and `last` focuses the workspace you were
+actually in before this one.
+
+Both need a clock herdr does not provide. There is no `state_changed_at`
+anywhere in the 0.8.2 API — herdr discussion #707 asked for it (7 upvotes,
+"such a killer feature"), #3619 asks again, #2034 asked and was closed. The
+only related field is `state_change_seq`, a global monotonic counter that
+orders changes without measuring them.
+
+So sesh-bro times it, from a `[[events]]` hook rather than a daemon. herdr runs
+a plugin command per event, and — verified against 0.8.2 — those hooks fire for
+every pane with **no per-pane registration**, unlike `events.subscribe` whose
+status subscription demands a `pane_id`. The cost is one short-lived process
+per state change; a resident process would be a much larger footprint for the
+same answer. `record-event` writes `$HERDR_PLUGIN_STATE_DIR/state.json` under
+an exclusive lock, temp-file-and-rename, and never exits non-zero.
+
+Rules worth stating because getting them wrong is invisible:
+
+- **`on` must be the dotted name.** The underscored spelling is rejected with a
+  non-fatal warning in `herdr plugin list --json` and the hook silently never
+  fires. The `event`/`type` fields inside the payload are underscored, which is
+  what makes the trap easy to fall into.
+- **An unchanged status does not restart the clock.** herdr re-reports a pane's
+  status on events that changed something else; treating those as transitions
+  would pin every badge at "0s".
+- **`done` → `idle` does not restart it either.** They are the same underlying
+  state — `done` is idle-with-unseen-work, becoming `idle` the moment you look
+  at the tab. An agent that finished twenty minutes ago has been waiting twenty
+  minutes whether or not you glanced at it, and resetting on the glance erases
+  exactly the number that was wanted (the consensus in #707).
+- **A disagreement between recorded and live status yields no badge.** It means
+  the hook missed a transition, and a badge from a stale start time is
+  confidently wrong, which is worse than absent.
+
+Badges appear only on blocked and done rows, and never in `--json`: those are
+the two states where the number changes what you do, and a badge on every
+working row would be noise competing with the rows that matter.
+
+`last` previously picked the highest-numbered OTHER workspace, which coincides
+with "previous" only when you have two. With recorded history it takes the most
+recently focused workspace that is not the current one and still exists; with
+no history yet it falls back to the old rule rather than refusing. S2's silent
+no-op (running outside a herdr pane, `current == ""`) is unchanged in the
+fallback path.
+
 ## Appendix A — exit code reference
 
 | Command | 0 | 1 | 2 |

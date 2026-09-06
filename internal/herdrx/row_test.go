@@ -427,3 +427,46 @@ func TestSplitAttentionIgnoresNonAgentRows(t *testing.T) {
 		t.Errorf("rest = %v, want the workspace row", rest)
 	}
 }
+
+// Badges land only on the rows where the number changes what you do. An agent
+// blocked for nine minutes is a different situation from one blocked for nine
+// seconds; a working agent's age is noise competing with those.
+func TestWithAgesOnlyBadgesAttentionRows(t *testing.T) {
+	rows := []Row{
+		{Type: RowAgent, Target: "b", Status: "blocked", Detail: "claude · x", PaneID: "p1"},
+		{Type: RowAgent, Target: "d", Status: "done", Detail: "claude · y", PaneID: "p2"},
+		{Type: RowAgent, Target: "w", Status: "working", Detail: "claude · z", PaneID: "p3"},
+		{Type: RowAgent, Target: "i", Status: "idle", Detail: "claude · q", PaneID: "p4"},
+		{Type: RowWorkspace, Target: "w1", Status: "blocked", Detail: "1p/1t", PaneID: ""},
+	}
+	got := WithAges(rows, map[string]string{"p1": "9m", "p2": "3h", "p3": "1s", "p4": "2d"})
+
+	if got[0].Detail != "claude · x · 9m" {
+		t.Errorf("blocked detail = %q, want a badge", got[0].Detail)
+	}
+	if got[1].Detail != "claude · y · 3h" {
+		t.Errorf("done detail = %q, want a badge", got[1].Detail)
+	}
+	if got[2].Detail != "claude · z" {
+		t.Errorf("working row was badged: %q", got[2].Detail)
+	}
+	if got[3].Detail != "claude · q" {
+		t.Errorf("idle row was badged: %q", got[3].Detail)
+	}
+	if got[4].Detail != "1p/1t" {
+		t.Errorf("workspace row was badged: %q", got[4].Detail)
+	}
+}
+
+// A pane with no recorded age is left exactly as it was: a missed transition
+// costs a badge, never a wrong one.
+func TestWithAgesLeavesUnknownPanesAlone(t *testing.T) {
+	rows := []Row{{Type: RowAgent, Target: "b", Status: "blocked", Detail: "claude · x", PaneID: "p1"}}
+	got := WithAges(rows, map[string]string{"other": "9m"})
+	if got[0].Detail != "claude · x" {
+		t.Errorf("detail = %q, want it untouched", got[0].Detail)
+	}
+	if same := WithAges(rows, nil); same[0].Detail != "claude · x" {
+		t.Errorf("nil ages changed the detail: %q", same[0].Detail)
+	}
+}
