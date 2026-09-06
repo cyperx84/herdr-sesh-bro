@@ -67,6 +67,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 		return cmdPicker(ctx, env, args)
 	case "list":
 		return cmdList(ctx, env, args)
+	case "counts":
+		return cmdCounts(ctx, env, args)
 	case "connect":
 		return cmdConnect(ctx, env, args)
 	case "close":
@@ -226,6 +228,8 @@ func usage(version string) string {
 commands:
   picker [flags]     open the fzf picker (default)
   list   [flags]     print picker candidates (type, target, display)
+  counts [flags]     one line: how many agents are blocked/working/done/idle
+                     (--ansi colour, --json, --all to include zeros)
   connect TYPE TARGET
                      focus a workspace/agent, or create a workspace for a dir
   close TYPE TARGET  close a workspace (workspace rows only; picker alt-x)

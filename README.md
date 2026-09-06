@@ -106,6 +106,7 @@ Run it directly, or bind it to a key:
 
 ```sh
 sesh-bro picker          # interactive fzf picker (default command)
+sesh-bro counts          # one line: how many agents are blocked/working/done/idle
 sesh-bro list            # picker candidates as tab-separated rows
 sesh-bro list --json     # machine-readable candidates
 sesh-bro connect TYPE TARGET
@@ -156,6 +157,52 @@ not be the one that silently closes a workspace.)
 - `--blocked` / `--working` / `--done` / `--idle` — filter agents by status
 - `--hide-current` — drop the current workspace and its agents from the list
 - `--json` — machine-readable output (`list` only)
+
+## Zero keypresses: agent counts in the tab bar
+
+The picker costs a keystroke, but the question you ask most often is not
+"which session" — it is "does anything need me at all". `counts` answers that
+without being asked:
+
+```sh
+sesh-bro counts          # 🔴2 🟡5 🔵1 ⚪12   (zero-count states omitted)
+sesh-bro counts --ansi   # ● 2 blocked · ● 5 working · ● 1 done · ● 12 idle
+sesh-bro counts --json   # {"blocked":2,...} — every state, zeros included
+sesh-bro counts --all    # keep zero states, for a fixed-width display
+```
+
+It is one line, one `session.snapshot` call, and never empty — an empty session
+prints `no agents`, because a blank tab-bar entry reads as a broken command.
+
+herdr 0.8.2 can put that line in the tab bar and refresh it on a timer. Add to
+`~/.config/herdr/config.toml`:
+
+```toml
+[ui]
+tab_bar_right = [
+  { type = "command", command = "/absolute/path/to/sesh-bro counts", interval_seconds = 2 },
+]
+```
+
+Use an absolute path: herdr runs the command through `/bin/sh -lc`, and takes
+only the **last line** of stdout. Then `herdr config check && herdr server
+reload-config`.
+
+While you are in that file, two herdr settings do most of the same work for
+free and are off by default:
+
+```toml
+[ui]
+agent_panel_sort = "priority"   # agents panel becomes an attention queue
+status_indicators = "symbols"   # distinct glyph per state, not colour-only dots
+
+[ui.toast]
+delivery = "herdr"              # default is off, so background agents announce nothing
+```
+
+The same line drives a SketchyBar item or a shell prompt — export
+`HERDR_SOCKET_PATH` (`~/.config/herdr/herdr.sock`) if you call it from outside
+a herdr pane.
 
 ## Configuration
 

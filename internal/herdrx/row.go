@@ -407,3 +407,30 @@ func isAttentionStatus(status string) bool {
 	return herdr.AgentStatus(status) == herdr.StatusBlocked ||
 		herdr.AgentStatus(status) == herdr.StatusDone
 }
+
+// StatusOrder is the order every counts/summary rendering walks: the order
+// the human cares about, which is also agentRank's order. Unknown trails
+// because it means herdr could not classify the agent, not that the agent is
+// finished (herdr-api's AgentStatus.Settled deliberately excludes it).
+var StatusOrder = []herdr.AgentStatus{
+	herdr.StatusBlocked,
+	herdr.StatusWorking,
+	herdr.StatusDone,
+	herdr.StatusIdle,
+	herdr.StatusUnknown,
+}
+
+// CountByStatus tallies agents per normalized status. Statuses with no agents
+// are absent from the map rather than present-and-zero, so a caller deciding
+// what to show can distinguish "none" from "not counted" without a second
+// lookup table; StatusOrder is the canonical iteration order.
+//
+// Normalization matches AgentRows (§2.2.5): an empty status counts as
+// unknown, so the totals always add up to len(agents).
+func CountByStatus(agents []Agent) map[herdr.AgentStatus]int {
+	counts := make(map[herdr.AgentStatus]int, len(StatusOrder))
+	for _, a := range agents {
+		counts[NormalizeStatus(a.Status)]++
+	}
+	return counts
+}

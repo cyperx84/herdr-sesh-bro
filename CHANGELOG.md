@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - Unreleased
 
+### Added
+- **`counts`** — one line saying how many agents are blocked/working/done/idle,
+  cheap enough to run on a timer. `--ansi` colours it, `--json` emits every
+  state including zeros, `--all` keeps zero states in the human line. Built for
+  herdr 0.8.2's right-aligned `tab_bar_right` command entries, so the answer to
+  "does anything need me" can live in the tab bar and never be asked for; it
+  also drives a SketchyBar item or a shell prompt. An empty session prints
+  `no agents` rather than an empty line, because a blank tab-bar entry reads as
+  a broken command. Idea from `wjarka/herdr-ghostty-tab-title`, which puts the
+  same counts in a Ghostty tab title.
+- **Attention-first ordering** — agent rows whose status is `blocked` or `done`
+  are hoisted above every other block, from whichever workspace they belong to,
+  so the picker opens with the cursor on whoever needs you instead of on the
+  workspace you are already in. Those are exactly herdr's two "has something
+  for you that you have not seen" states. `SESH_BRO_ATTENTION_FIRST=0` restores
+  the previous current-workspace-first order.
+- `internal/herdrx/herdrtest`, a fake herdr socket server for tests: real
+  newline-delimited JSON-RPC matching herdr-api's wire format, with
+  `events.subscribe` held open for pushed events. Success paths that previously
+  had no test — `list`, `counts`, `connect` — now have one.
+
+### Changed
+- `list` makes **one** `session.snapshot` call instead of `workspace.list` +
+  `agent.list` + `pane.list` twice.
+- Agent rows break ties within a status rank by `state_change_seq` descending
+  before name, so the agent that just changed state leads the ones that have
+  been sitting a while. It is herdr's only recency signal — there are no status
+  timestamps anywhere in the API.
+- An unset `HERDR_WORKSPACE_ID` now falls back to the snapshot's
+  `focused_workspace_id`, so current-first ordering and `--hide-current` work
+  when the binary runs outside a herdr-spawned pane.
+- `git status` is memoised per working directory for the process's lifetime, so
+  a re-render costs no subprocesses.
+- `min_herdr_version` raised from `0.8.0` to `0.8.2`: `popup.close` and
+  `session.snapshot` are only confirmed present in the 0.8.2 schema.
+
+### Removed
+- The pane-list file cache, `SESH_BRO_CACHE_TTL`, `SESH_BRO_PANE_CACHE` and the
+  manifest's `cache_ttl`. `session.snapshot` removed the calls the cache
+  existed to soften, and the cache's TTL bucket reproduced `find -mmin`
+  semantics under which the default value almost never produced a hit
+  (docs/BEHAVIOUR.md §9 S4).
+- The bash implementation and its bats harness. `tests/mock-herdr` mocked the
+  herdr **CLI**, and the Go binary speaks the socket, so it could never drive
+  this code; `go test` now runs in CI in its place.
+
 ### Fixed
 - The `SESH_BRO_KEY_CLOSE` default was `ctrl-q` — one of fzf's four default
   abort keys (`ctrl-c`, `ctrl-g`, `ctrl-q`, `esc`) — while the picker's own

@@ -234,3 +234,76 @@ func PreviewDirReadmeSeparator(basename string) string {
 func PreviewUnknown() string {
 	return "no preview\n"
 }
+
+// CountsStyle selects how CountsLine renders. The three exist because the
+// line has three consumers with incompatible constraints: a herdr tab-bar
+// entry takes plain text and no escapes, a terminal wants colour, and a
+// status-bar script wants to do its own formatting.
+type CountsStyle int
+
+const (
+	// CountsPlain is glyph-and-number with no escapes: "🔴2 🟡5 🔵1 ⚪12".
+	// herdr's tab_bar_right takes the last line of a command's stdout as
+	// literal text, so colour has to be carried by the glyph itself.
+	CountsPlain CountsStyle = iota
+	// CountsANSI colours a dot per status and names it: "● 2 blocked · …",
+	// using the same palette as list rows so the two never disagree.
+	CountsANSI
+)
+
+// countsLabel is the word CountsANSI prints after each number.
+var countsLabel = map[string]string{
+	"blocked": "blocked",
+	"working": "working",
+	"done":    "done",
+	"idle":    "idle",
+	"unknown": "unknown",
+}
+
+// countsGlyph is CountsPlain's colour channel. Emoji rather than a coloured
+// dot because the destination — a terminal tab title or a status bar — is
+// plain text that cannot carry an escape sequence.
+var countsGlyph = map[string]string{
+	"blocked": "🔴",
+	"working": "🟡",
+	"done":    "🔵",
+	"idle":    "⚪",
+	"unknown": "⚫",
+}
+
+// CountsLine renders one line summarising how many agents are in each state.
+//
+// order fixes the sequence (callers pass herdrx.StatusOrder). A status with a
+// zero count is omitted unless includeZero, because the line's whole job is to
+// be readable at a glance in a tab bar: "🔴2 🟡5" says what matters, while
+// "🔴2 🟡5 🔵0 ⚪0 ⚫0" makes the reader parse noise to find the one number
+// that changed. With nothing at all to report the line is "no agents", never
+// empty — an empty line in a tab bar reads as a broken command.
+//
+// The result never contains a newline: herdr takes the LAST line of stdout,
+// so a multi-line result would silently show only its tail.
+func CountsLine(counts map[string]int, order []string, style CountsStyle, includeZero bool) string {
+	parts := make([]string, 0, len(order))
+	total := 0
+	for _, status := range order {
+		n := counts[status]
+		total += n
+		if n == 0 && !includeZero {
+			continue
+		}
+		switch style {
+		case CountsANSI:
+			parts = append(parts, fmt.Sprintf("%s●%s %d %s", StatusColor(status), Reset, n, countsLabel[status]))
+		default:
+			parts = append(parts, fmt.Sprintf("%s%d", countsGlyph[status], n))
+		}
+	}
+	if len(parts) == 0 || total == 0 && !includeZero {
+		return "no agents"
+	}
+	sep := " "
+	if style == CountsANSI {
+		sep = " · "
+	}
+	return strings.Join(parts, sep)
+}
