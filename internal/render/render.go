@@ -307,3 +307,22 @@ func CountsLine(counts map[string]int, order []string, style CountsStyle, includ
 	}
 	return strings.Join(parts, sep)
 }
+
+// HeaderRowKind is the type field of the pinned header row. It is not a
+// picker candidate and can never be selected — fzf's --header-lines removes
+// the line from the match list entirely — but the row still has to carry three
+// tab-separated fields, because --with-nth=3.. applies to every input line and
+// a short line would display the wrong part of itself.
+const HeaderRowKind = "header"
+
+// HeaderRow wraps an already-rendered summary line as `list`'s first output
+// row, for fzf's --header-lines=1 to pin above the results.
+//
+// Putting the counts INSIDE the row stream rather than in fzf's --header flag
+// is what makes them live: --header is fixed for the process's lifetime, while
+// a header line is part of the input and is therefore replaced by every
+// reload. So the counts update with the list, for free, using the mechanism
+// that was already updating the list.
+func HeaderRow(line string) string {
+	return HeaderRowKind + "\t-\t" + line + "\n"
+}

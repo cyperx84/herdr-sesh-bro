@@ -1674,6 +1674,46 @@ trains users to press for "get me out of here" silently closed a workspace and e
 it. `internal/picker`'s own default had always said `alt-x` and explained why; the two
 disagreed and config won. They are now pinned together by a test.
 
+### 10.6 The picker updates itself while it is open
+
+*Extends §3; the pre-0.4.0 picker is what an older fzf still gets.*
+
+An open picker now follows the session. A goroutine subscribes to herdr's
+events, and when something changes it re-renders the rows and posts a `reload`
+into the running fzf through its `--listen` unix socket.
+
+Push rather than poll. A timer would have to re-query the daemon forever to
+discover that nothing happened, on a machine already running a dozen agents.
+Events cost nothing while the session is quiet.
+
+Four fzf features carry this, each detected and each degrading rather than
+failing (`internal/picker.Features`): `--listen` (0.66) for the push,
+`--track --id-nth` (0.71) so the cursor follows the row's target rather than
+its index, `--footer` (0.72) so the key hints leave the header, and
+`transform`+`put` (0.74) for the opt-in digit jump. An fzf below 0.66 gets
+exactly the 0.3.0 picker: a snapshot of the moment you pressed the key.
+
+Three consequences worth stating:
+
+- **Filter keys stop re-executing the binary.** Each view is pre-rendered to a
+  file in the picker's runtime directory, so `^b` costs a file read instead of
+  a process start plus a daemon round trip. A marker file records which view is
+  showing, so a pushed update re-sends the right one.
+- **A render that changes nothing pushes nothing.** herdr emits `pane_updated`
+  freely; reloading the list under the user's cursor for an invisible change is
+  the jank this design exists to avoid.
+- **The counts line is a ROW, not fzf's `--header`.** `--header` is fixed for
+  the process's lifetime, while a header line is part of the input and so is
+  replaced by every reload — the counts stay live on the mechanism that was
+  already updating the list. `list --header` emits it; `--json` never does.
+
+Measured against fzf 0.74.3, driving a real picker through pushed reloads:
+`--track --id-nth` holds the cursor on the same row across a reload, and when
+the tracked row is GONE the cursor settles at the top with `reading: false`
+and `progress: 100`. It does not hang. The concern that tracking would block
+the UI waiting for a vanished item does not apply to a finite reload stream,
+which `cat` of a rows file always is.
+
 ## Appendix A — exit code reference
 
 | Command | 0 | 1 | 2 |

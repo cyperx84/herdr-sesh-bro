@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -81,11 +82,17 @@ func cmdPicker(ctx context.Context, env *appEnv, args []string) int {
 	// (possibly zero) made it through before the failure.
 	pr, pw := io.Pipe()
 	go func() {
-		if err := listOutput(ctx, env, pickerArgs, pw); err != nil {
+		if err := listOutput(ctx, env, append(pickerArgs, "--header"), pw); err != nil {
 			fmt.Fprintln(env.stderr, err)
 		}
 		pw.Close()
 	}()
+
+	// What this fzf can do decides how live the picker is. Everything absent
+	// degrades to the 0.3.0 behaviour rather than failing — see picker.Features.
+	feats := picker.Detect(func(name string, args ...string) ([]byte, error) {
+		return exec.Command(name, args...).Output()
+	})
 
 	opts := picker.Options{
 		SelfPath:       env.self,
@@ -96,6 +103,26 @@ func cmdPicker(ctx context.Context, env *appEnv, args []string) int {
 		Aliases:        cfg.Aliases,
 		Keys:           cfg.Keys(),
 		Stderr:         env.stderr,
+		Fzf:            feats,
+		// The counts line rides in as the first ROW rather than in fzf's
+		// --header flag, because --header is fixed for the process's lifetime
+		// while a header line is replaced by every reload — so the counts stay
+		// live for free, on the mechanism already updating the list.
+		HeaderLines: true,
+	}
+
+	// The live layer is strictly additive: if any part of it cannot be set up
+	// — an old fzf, an unwritable TMPDIR, a daemon that will not take a
+	// subscription — the picker still opens and still works, just as a
+	// snapshot of the moment you pressed the key.
+	if feats.Live() {
+		if dir, err := runtimeDir(env.getenv, os.Getpid()); err == nil {
+			defer os.RemoveAll(dir)
+			opts.RowsDir = dir
+			opts.ListenSocket = listenSocketPath(dir)
+			stop := startLiveUpdates(ctx, env, cfg, dir, hideCurrent)
+			defer stop()
+		}
 	}
 	connector := func(kind, target string) error {
 		client, openErr := openHerdr(env.getenv)

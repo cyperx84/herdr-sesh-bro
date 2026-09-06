@@ -160,6 +160,25 @@ not be the one that silently closes a workspace.)
 - `--hide-current` — drop the current workspace and its agents from the list
 - `--json` — machine-readable output (`list` only)
 
+## The picker updates while it is open
+
+Open the picker and leave it open: when an agent changes state, the list
+re-sorts and the counts change underneath you, without a keypress and without
+polling. sesh-bro subscribes to herdr's events and pushes a reload into the
+running fzf through its `--listen` socket, so a quiet session costs nothing.
+
+Your cursor stays on the agent you were looking at. fzf tracks the row by its
+target rather than its position, which is what makes a list that re-sorts under
+you usable at all.
+
+The counts line is pinned at the top and updates with the list.
+
+This needs **fzf 0.66+** for the push, **0.71+** for cursor tracking, **0.72+**
+for the footer, and **0.74+** for the opt-in digit jump. Everything is detected
+and every absence degrades rather than fails — on an older fzf the picker opens
+exactly as it did before, showing the session as of the moment you pressed the
+key. `sesh-bro startup` reports which features your fzf has.
+
 ## One keypress: jump to whoever needs you
 
 ```sh

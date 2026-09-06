@@ -286,3 +286,10 @@ func (c *Client) ShowToast(ctx context.Context, title, body string) (herdr.Notif
 	}
 	return res, nil
 }
+
+// Raw exposes the underlying herdr-api client for the one caller that needs a
+// capability this wrapper deliberately does not re-export: event
+// subscriptions, whose Stream type and lifecycle belong to internal/live.
+// Wrapping Subscribe here would mean re-declaring Stream and its Close
+// semantics for no benefit.
+func (c *Client) Raw() *herdr.Client { return c.c }

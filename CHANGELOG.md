@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - Unreleased
 
 ### Added
+- **The picker updates while it is open.** A subscription to herdr's events
+  drives a re-render and a `reload` pushed into the running fzf over its
+  `--listen` unix socket — no polling, so a quiet session costs nothing. The
+  cursor stays on the agent you were looking at (`--track --id-nth` follows the
+  row's target, not its index), the pinned counts line updates with the list,
+  and filter keys now read a pre-rendered file instead of re-executing the
+  binary. Requires fzf 0.66+ for the push, 0.71+ for tracking, 0.72+ for the
+  footer; every feature is detected and every absence degrades to the 0.3.0
+  picker rather than failing.
 - **`next` / `prev`** — one keypress to the agent that wants you, no picker in
   between. The set is blocked then done, ordered by most recent state change;
   the cycle is stateless (read the snapshot, skip the focused pane, wrap), so

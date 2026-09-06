@@ -32,6 +32,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -110,6 +111,34 @@ type Options struct {
 	// caller, before this field existed) reproduces bash's six hardcoded
 	// binds exactly, plus Feature A's new Close bind at its own default.
 	Keys KeyBindings
+
+	// Fzf is what the installed fzf actually supports (see Detect). Every
+	// feature it reports absent degrades to the pre-0.4.0 behaviour rather
+	// than failing, so the zero value builds exactly the argv 0.3.0 built.
+	Fzf Features
+
+	// HeaderLines pins the first input row as a header instead of matching
+	// against it — `list --header` emits a live counts line there. It is a
+	// separate flag from Fzf because --header-lines predates every feature
+	// Detect probes; the caller decides whether it asked `list` for the row.
+	HeaderLines bool
+
+	// ListenSocket is a unix socket path fzf serves actions on (--listen,
+	// fzf 0.66). Empty, or an fzf without Listen, means nothing can push into
+	// this picker and it behaves as a snapshot. fzf requires the path to end
+	// in ".sock".
+	ListenSocket string
+
+	// RowsDir holds pre-rendered per-view row files (all.tsv, agents.tsv, …)
+	// plus a "view" marker file naming the one currently displayed.
+	//
+	// When set, the filter keys reload by `cat`-ing a file instead of
+	// re-executing this binary, which is the difference between a keypress
+	// costing a process start plus a daemon round trip and it costing a read
+	// of a few kilobytes. The marker file is how the process pushing updates
+	// knows which view to re-send. Empty keeps the 0.3.0 behaviour of
+	// re-execing `list` per keypress.
+	RowsDir string
 
 	// Stderr receives both this package's own diagnostics ("sesh-bro: fzf
 	// is required", "sesh-bro: failed to connect to <kind> <target>") and
@@ -399,11 +428,23 @@ func BuildArgs(opts Options) []string {
 		// from the RESOLVED keys rather than bash's hardcoded literals —
 		// see keyLabel's doc comment for why this header must stay truthful
 		// under SESH_BRO_KEY_* overrides where the preview headers don't.
-		fmt.Sprintf(
-			"--header=enter connect · %s workspaces · %s agents · %s blocked · %s dirs · %s all · %s close · %s create",
-			keyLabel(keys.Workspaces), keyLabel(keys.Agents), keyLabel(keys.Blocked),
-			keyLabel(keys.Dirs), keyLabel(keys.All), keyLabel(keys.Close), keyLabel(keys.Create),
-		),
+	}
+
+	// The key hints move to --footer when fzf can render one (0.72), which
+	// frees the header for the live counts row. Below that version they stay
+	// exactly where they have always been.
+	hints := fmt.Sprintf(
+		"enter connect · %s workspaces · %s agents · %s blocked · %s dirs · %s all · %s close · %s create",
+		keyLabel(keys.Workspaces), keyLabel(keys.Agents), keyLabel(keys.Blocked),
+		keyLabel(keys.Dirs), keyLabel(keys.All), keyLabel(keys.Close), keyLabel(keys.Create),
+	)
+	if opts.Fzf.Footer {
+		args = append(args, "--footer="+hints)
+	} else {
+		args = append(args, "--header="+hints)
+	}
+	if opts.HeaderLines {
+		args = append(args, "--header-lines=1")
 	}
 	if opts.PreviewEnabled {
 		// Bare {1} {2} — fzf single-quotes each {n} placeholder itself
@@ -413,6 +454,22 @@ func BuildArgs(opts Options) []string {
 		// this reason.
 		args = append(args, fmt.Sprintf("--preview=%s preview {1} {2}", selfQ))
 	}
+	if opts.Fzf.Listen && opts.ListenSocket != "" {
+		// fzf only treats the value as a socket path when it ends in .sock;
+		// anything else is parsed as a port, which would open a TCP listener
+		// instead. runtimeDir guarantees the suffix, and this is the reason.
+		args = append(args, "--listen="+opts.ListenSocket)
+	}
+	if opts.Fzf.TrackID {
+		// Track the cursor by the row's TARGET (field 2), not by its index.
+		// The list re-sorts under the user whenever an agent changes state,
+		// and index tracking would silently move the selection to whatever
+		// row inherited that position. Identity tracking keeps the cursor on
+		// the agent the user was looking at — which is precisely the tradeoff
+		// herdr core cannot make for its own panel (discussion #2761).
+		args = append(args, "--track", "--id-nth=2")
+	}
+
 	args = append(args,
 		fmt.Sprintf("--preview-window=right,%s,border-left", pw),
 		// Every reload/execute-silent bind below re-invokes the compiled
@@ -436,11 +493,11 @@ func BuildArgs(opts Options) []string {
 		// as the --preview bind does. No --multi: highlighted-versus-selected
 		// cannot then diverge for an irreversible action.
 		fmt.Sprintf("--bind=%s:execute-silent(%s close {1} {2})+reload(%s list %s)", keys.Close, selfQ, selfQ, hide),
-		fmt.Sprintf("--bind=%s:reload(%s list --workspaces %s)", keys.Workspaces, selfQ, hide),
-		fmt.Sprintf("--bind=%s:reload(%s list --agents %s)", keys.Agents, selfQ, hide),
-		fmt.Sprintf("--bind=%s:reload(%s list --blocked %s)", keys.Blocked, selfQ, hide),
-		fmt.Sprintf("--bind=%s:reload(%s list --dirs %s)", keys.Dirs, selfQ, hide),
-		fmt.Sprintf("--bind=%s:reload(%s list %s)", keys.All, selfQ, hide),
+		viewBind(opts, keys.Workspaces, "workspaces", selfQ, hide),
+		viewBind(opts, keys.Agents, "agents", selfQ, hide),
+		viewBind(opts, keys.Blocked, "blocked", selfQ, hide),
+		viewBind(opts, keys.Dirs, "dirs", selfQ, hide),
+		viewBind(opts, keys.All, "all", selfQ, hide),
 		fmt.Sprintf("--bind=%s:execute-silent(%s create)+reload(%s list %s)", keys.Create, selfQ, selfQ, hide),
 	)
 	return args
@@ -588,3 +645,28 @@ func Run(opts Options, connect Connector) error {
 	}
 	return nil
 }
+
+// viewBind builds one filter key's --bind.
+//
+// With a RowsDir the key reads a pre-rendered file and records which view is
+// now showing; without one it re-executes `list` exactly as 0.3.0 did. The
+// marker file is written BEFORE the cat so that an update arriving mid-reload
+// re-sends the view the user just asked for rather than the one they left.
+//
+// "all" is spelled as a bare `list` in the re-exec form because that is the
+// string bash emitted and the golden argv test pins it (BEHAVIOUR.md §3.3,
+// including its trailing space when --hide-current is absent).
+func viewBind(opts Options, key, view, selfQ, hide string) string {
+	if opts.RowsDir == "" {
+		if view == "all" {
+			return fmt.Sprintf("--bind=%s:reload(%s list %s)", key, selfQ, hide)
+		}
+		return fmt.Sprintf("--bind=%s:reload(%s list --%s %s)", key, selfQ, view, hide)
+	}
+	marker := quoteSingle(filepath.Join(opts.RowsDir, viewMarkerFile))
+	rows := quoteSingle(filepath.Join(opts.RowsDir, view+".tsv"))
+	return fmt.Sprintf("--bind=%s:reload(printf %%s %s > %s; cat %s)", key, view, marker, rows)
+}
+
+// viewMarkerFile names the file inside RowsDir holding the current view.
+const viewMarkerFile = "view"

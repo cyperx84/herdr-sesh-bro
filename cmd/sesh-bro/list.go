@@ -27,6 +27,11 @@ type listFlags struct {
 	statuses                   []herdr.AgentStatus
 	hideCurrent                bool
 	asJSON                     bool
+	// header emits a pinned counts row as the first line, for fzf's
+	// --header-lines=1. Like --json it is an OUTPUT flag: parseListFlags must
+	// not let it touch the source selection, or `list --header --agents`
+	// would differ from `list --agents --header` (the S3 trap).
+	header bool
 }
 
 // parseListFlags reproduces sesh-bro:131-144 field for field — CRITICALLY,
@@ -64,6 +69,8 @@ func parseListFlags(args []string) (listFlags, error) {
 			f.hideCurrent = true
 		case "--json":
 			f.asJSON = true
+		case "--header":
+			f.header = true
 		default:
 			return listFlags{}, fmt.Errorf("sesh-bro list: unknown flag %s", a)
 		}
@@ -242,9 +249,20 @@ func renderRows(ctx context.Context, cfg config.Config, flags listFlags, src lis
 	}
 
 	if flags.asJSON {
+		// No header row in JSON: it is a display affordance for fzf, not a
+		// candidate, and a consumer parsing rows should not have to skip it.
 		writeJSONRows(w, raw)
 		return nil
 	}
+
+	if flags.header {
+		// The counts describe the whole session, not the filtered view: the
+		// question the header answers is "is anything waiting anywhere",
+		// which must not change because the user pressed the dirs key.
+		counts := herdrx.CountByStatus(src.snap.Agents)
+		fmt.Fprint(w, render.HeaderRow(render.CountsLine(statusCounts(counts), statusOrder(), render.CountsANSI, false)))
+	}
+
 	icons := cfg.Icons()
 	for _, r := range raw {
 		line, err := render.FormatRow(r.Type, r.Target, r.Status, r.Label, r.Detail, icons)
