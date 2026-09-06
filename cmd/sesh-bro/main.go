@@ -69,6 +69,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 		return cmdList(ctx, env, args)
 	case "counts":
 		return cmdCounts(ctx, env, args)
+	case "next":
+		return cmdNext(ctx, env, args, 1)
+	case "prev":
+		return cmdNext(ctx, env, args, -1)
 	case "connect":
 		return cmdConnect(ctx, env, args)
 	case "close":
@@ -228,6 +232,8 @@ func usage(version string) string {
 commands:
   picker [flags]     open the fzf picker (default)
   list   [flags]     print picker candidates (type, target, display)
+  next               focus the next agent needing attention (blocked, then done)
+  prev               same, backwards
   counts [flags]     one line: how many agents are blocked/working/done/idle
                      (--ansi colour, --json, --all to include zeros)
   connect TYPE TARGET

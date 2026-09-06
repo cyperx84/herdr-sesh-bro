@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - Unreleased
 
 ### Added
+- **`next` / `prev`** — one keypress to the agent that wants you, no picker in
+  between. The set is blocked then done, ordered by most recent state change;
+  the cycle is stateless (read the snapshot, skip the focused pane, wrap), so
+  it stays correct when you navigate by other means between presses. A toast
+  names the target and the queue depth, sent *before* focusing because herdr
+  suppresses notifications aimed at the tab focus is about to activate. Nothing
+  waiting says `nothing needs you` rather than failing silently. Registered as
+  the `sesh-bro.next` / `sesh-bro.prev` plugin actions for `[[keys.command]]`.
+  herdr's own `next_agent` cycles in panel order, which only tracks urgency if
+  `agent_panel_sort = "priority"` — and that reorders the panel, breaking
+  `focus_agent`'s stable 1–9 positions (herdr discussion #2761). This reorders
+  nothing. Demand: herdr discussions #682, #778. Cycle design after
+  `milkyskies/herdr-attention`.
 - **`counts`** — one line saying how many agents are blocked/working/done/idle,
   cheap enough to run on a timer. `--ansi` colours it, `--json` emits every
   state including zeros, `--all` keeps zero states in the human line. Built for

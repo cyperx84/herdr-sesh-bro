@@ -106,6 +106,8 @@ Run it directly, or bind it to a key:
 
 ```sh
 sesh-bro picker          # interactive fzf picker (default command)
+sesh-bro next            # focus the next agent needing attention (blocked, then done)
+sesh-bro prev            # ...the previous one
 sesh-bro counts          # one line: how many agents are blocked/working/done/idle
 sesh-bro list            # picker candidates as tab-separated rows
 sesh-bro list --json     # machine-readable candidates
@@ -157,6 +159,50 @@ not be the one that silently closes a workspace.)
 - `--blocked` / `--working` / `--done` / `--idle` — filter agents by status
 - `--hide-current` — drop the current workspace and its agents from the list
 - `--json` — machine-readable output (`list` only)
+
+## One keypress: jump to whoever needs you
+
+```sh
+sesh-bro next    # focus the next agent needing attention
+sesh-bro prev    # ...the previous one
+```
+
+"Needing attention" is blocked, then done — herdr's two states meaning "has
+something for you that you have not seen". Blocked is an approval or question
+prompt; done is the idle state reached by unseen background work, which stays
+done until you look at the tab. Working and idle are skipped because neither is
+waiting on you, and `unknown` is skipped because herdr could not classify it.
+
+The cycle is stateless: it reads the live session each time, skips the pane you
+are already on, and wraps. Press it repeatedly to drain the queue. With nothing
+waiting it says `nothing needs you` rather than doing nothing silently.
+
+A toast names the target and how much else is queued (`→ builder blocked (+2
+more)`). It is sent **before** focusing, because herdr suppresses a
+notification aimed at the tab you are already looking at, which focusing is
+about to make it.
+
+Bind it in `~/.config/herdr/config.toml`:
+
+```toml
+[[keys.command]]
+key = "alt+."
+type = "plugin_action"
+command = "sesh-bro.next"
+
+[[keys.command]]
+key = "alt+,"
+type = "plugin_action"
+command = "sesh-bro.prev"
+```
+
+**Why not herdr's built-in `next_agent`?** It cycles in *panel* order, so it
+only follows urgency if you also set `agent_panel_sort = "priority"` — and that
+reorders the panel, which breaks the stable positions `focus_agent`'s 1–9
+indexes depend on. herdr discussion
+[#2761](https://github.com/herdrdev/herdr/discussions/2761) puts it exactly:
+"stable numbers or attention-ordered cycling — I can have either, not both."
+sesh-bro reorders nothing, so you can have both.
 
 ## Zero keypresses: agent counts in the tab bar
 

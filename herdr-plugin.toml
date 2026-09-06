@@ -83,6 +83,21 @@ title = "Open sesh-bro picker (blocked agents)"
 contexts = ["workspace"]
 command = ["./bin/sesh-bro", "open", "--blocked"]
 
+# One-keypress jumps to whoever needs you, for a [[keys.command]] binding.
+# Contexts include "global" so the binding works from any pane, not only one
+# with a workspace context.
+[[actions]]
+id = "next"
+title = "Jump to next agent needing attention"
+contexts = ["global", "workspace"]
+command = ["./bin/sesh-bro", "next"]
+
+[[actions]]
+id = "prev"
+title = "Jump to previous agent needing attention"
+contexts = ["global", "workspace"]
+command = ["./bin/sesh-bro", "prev"]
+
 # Invoked by the github-worktree link handler; also runnable from the palette.
 [[actions]]
 id = "worktree"

@@ -95,6 +95,7 @@ type Server struct {
 	mu        sync.Mutex
 	handlers  map[string]Handler
 	calls     map[string][]Call
+	callOrder []string
 	subs      []herdr.Subscription
 	subConns  map[net.Conn]struct{}
 	listener  net.Listener
@@ -149,6 +150,20 @@ func (s *Server) Handle(method string, fn Handler) {
 // Calls returns the requests recorded for method, oldest first, so a test
 // can assert the params a command actually sent. Only presence and order are
 // the server's to guarantee; params are the raw bytes the client wrote.
+// CallOrder returns every method name in the order the server answered it.
+//
+// Some behaviour is only expressible as an ordering — `next` must send its
+// toast BEFORE agent.focus, because herdr suppresses a notification aimed at
+// the tab that focus is about to make active. A per-method call list cannot
+// express that; this can.
+func (s *Server) CallOrder() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.callOrder))
+	copy(out, s.callOrder)
+	return out
+}
+
 func (s *Server) Calls(method string) []Call {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -262,6 +277,7 @@ func (s *Server) serve(conn net.Conn) {
 
 	s.mu.Lock()
 	s.calls[req.Method] = append(s.calls[req.Method], Call{Params: req.Params})
+	s.callOrder = append(s.callOrder, req.Method)
 	handler, ok := s.handlers[req.Method]
 	s.mu.Unlock()
 

@@ -263,3 +263,26 @@ func (c *Client) ReadPaneVisibleANSI(ctx context.Context, paneID string) (string
 	}
 	return res.Text, nil
 }
+
+// ShowToast is `notification.show` — how a background command tells the human
+// what it just did, since a keybinding's output goes nowhere the user is
+// looking.
+//
+// The returned reason matters more than the bool: herdr suppresses
+// notifications for several reasons, and the one that bites here is that it
+// will not toast the tab you are already looking at. So a caller that both
+// toasts and focuses must toast FIRST — focus makes the destination the active
+// tab, after which the toast about it is dropped. `shown == false` with reason
+// "busy" or "disabled" is not an error, it just means the message needs
+// another channel.
+func (c *Client) ShowToast(ctx context.Context, title, body string) (herdr.NotificationShowResult, error) {
+	params := herdr.NotificationShowParams{Title: title}
+	if body != "" {
+		params.Body = &body
+	}
+	res, err := c.c.NotificationShow(ctx, params)
+	if err != nil {
+		return res, fmt.Errorf("herdrx: show notification: %w", err)
+	}
+	return res, nil
+}
