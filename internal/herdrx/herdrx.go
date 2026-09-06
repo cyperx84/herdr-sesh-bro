@@ -293,3 +293,15 @@ func (c *Client) ShowToast(ctx context.Context, title, body string) (herdr.Notif
 // Wrapping Subscribe here would mean re-declaring Stream and its Close
 // semantics for no benefit.
 func (c *Client) Raw() *herdr.Client { return c.c }
+
+// ClosePopup is `popup.close` — dismissing whatever plugin popup is open.
+//
+// It takes no parameters and returns no payload: herdr has at most one popup
+// at a time, which is also why opening a second one fails rather than
+// stacking. A `popup_not_open` error means there was nothing to close.
+func (c *Client) ClosePopup(ctx context.Context) error {
+	if err := c.c.Call(ctx, "popup.close", struct{}{}, nil); err != nil {
+		return fmt.Errorf("herdrx: close popup: %w", err)
+	}
+	return nil
+}

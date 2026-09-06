@@ -160,6 +160,12 @@ not be the one that silently closes a workspace.)
 - `--hide-current` — drop the current workspace and its agents from the list
 - `--json` — machine-readable output (`list` only)
 
+## The same key opens and closes it
+
+Whatever chord you bind to `sesh-bro.open` is now a toggle. herdr refuses to
+stack a second popup, and sesh-bro reads that refusal as "you meant close".
+Escape still works.
+
 ## The picker updates while it is open
 
 Open the picker and leave it open: when an agent changes state, the list

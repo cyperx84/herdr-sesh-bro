@@ -51,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   had no test — `list`, `counts`, `connect` — now have one.
 
 ### Changed
+- **`open` toggles.** Pressing the bound chord while the picker is open now
+  closes it, instead of surfacing herdr's "popup already open" refusal while
+  the popup sits there. herdr runs as a child process rather than via `exec` so
+  that failure is observable; every outcome other than the toggle forwards
+  herdr's output and exit code verbatim.
 - `list` makes **one** `session.snapshot` call instead of `workspace.list` +
   `agent.list` + `pane.list` twice.
 - Agent rows break ties within a status rank by `state_change_seq` descending

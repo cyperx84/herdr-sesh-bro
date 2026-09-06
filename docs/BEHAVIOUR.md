@@ -1714,6 +1714,30 @@ and `progress: 100`. It does not hang. The concern that tracking would block
 the UI waiting for a vanished item does not apply to a finite reload stream,
 which `cat` of a rows file always is.
 
+### 10.7 `open` toggles, and no longer `exec`s
+
+*Supersedes §2.9.*
+
+`open` used to `exec` the herdr CLI, so herdr's stdout, stderr and exit code
+became sesh-bro's and nothing after it ran. Pressing the bound chord a second
+time therefore hit herdr's refusal to stack a second popup and surfaced
+`popup already open` while the popup sat there — opening and closing were
+different gestures for something the user thinks of as one thing.
+
+herdr now runs as a child instead, and a failure whose output contains
+`popup already open` is answered with a `popup.close` call and exit 0. Every
+other outcome forwards herdr's stdout, stderr and exit code verbatim, so from
+the caller's side nothing else changed.
+
+Two details that look like details and are not:
+
+- The match is on the MESSAGE, not the error code. `plugin.pane.open` reports
+  this as `plugin_pane_open_failed`, the same code it uses for unrelated
+  failures, so keying on the code would turn every failed open into a close.
+- A `popup_not_open` error from the close is treated as success. Something
+  closed the popup between herdr's refusal and this call, which is the state
+  the user was asking for.
+
 ## Appendix A — exit code reference
 
 | Command | 0 | 1 | 2 |

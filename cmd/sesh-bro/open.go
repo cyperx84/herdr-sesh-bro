@@ -1,17 +1,25 @@
-// cmdOpen reproduces cmd_open (sesh-bro:580-595, BEHAVIOUR.md §2.9): open
-// the picker popup through the herdr plugin API. This is the ONE place this
-// port still shells out to the `herdr` CLI (BEHAVIOUR.md §6 note #12 —
-// plugin.pane.open has no herdr-api method) — and, matching bash's `exec`,
-// it REPLACES this process: herdr's own stdout, stderr, and exit code
-// become sesh-bro's, and nothing after the exec ever runs.
+// cmdOpen opens the picker popup through the herdr plugin API — the ONE place
+// this port still shells out to the `herdr` CLI, because plugin.pane.open has
+// no herdr-api method (BEHAVIOUR.md §6 note #12).
+//
+// Since 0.4.0 it also TOGGLES (BEHAVIOUR.md §10.7). Pressing the same chord
+// again used to hit herdr's "popup already open" error and leave the popup
+// sitting there, so opening and closing were different gestures for something
+// the user thinks of as one. Now a second open closes it.
+//
+// That costs the `exec` semantics bash had: this process must survive the
+// child in order to react to its failure, so herdr runs as a subprocess whose
+// output and exit code are forwarded rather than inherited (§10.7).
 package main
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 )
 
 // openFlags is the fixed set of flags `open` accepts — note `--json` is
@@ -53,16 +61,61 @@ func cmdOpen(env *appEnv, args []string) int {
 		return 127
 	}
 
-	// syscall.Exec REPLACES this process image, exactly like bash's `exec`
-	// (sesh-bro:591, :594): herdr's stdout/stderr/exit code become this
-	// program's. os.Environ() is the real process environment — this
-	// function always runs against the real one (unlike the rest of this
-	// package, which threads env.getenv everywhere for testability): a
-	// test that reached this line would replace the TEST BINARY's own
-	// process image, which is not something any test in this package does
-	// or should do. If Exec itself fails (should not, given LookPath just
-	// succeeded), fall through to a plain error.
-	err = syscall.Exec(bin, argv, os.Environ())
-	fmt.Fprintln(env.stderr, err)
-	return 1
+	// Run herdr as a child rather than replacing this process, so its failure
+	// is observable. Output is captured and forwarded verbatim, and the exit
+	// code is passed through, so every case except the toggle below behaves
+	// exactly as the previous `exec` did from the caller's point of view.
+	cmd := exec.Command(bin, argv[1:]...)
+	cmd.Env = os.Environ()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+
+	if runErr != nil && isPopupAlreadyOpen(stdout.String()+stderr.String()) {
+		// The popup is open and the user pressed the chord again: close it.
+		// Do NOT forward herdr's error — from the user's side this is a
+		// successful toggle, not a failed open.
+		client, openErr := openHerdr(env.getenv)
+		if openErr != nil {
+			fmt.Fprint(env.stderr, stderr.String())
+			return 1
+		}
+		if err := client.ClosePopup(context.Background()); err != nil {
+			// popup_not_open is a race, not a fault: something closed it
+			// between herdr's refusal and this call, which is the state the
+			// user was asking for anyway.
+			if !isPopupNotOpen(err.Error()) {
+				fmt.Fprintln(env.stderr, err)
+				return 1
+			}
+		}
+		return 0
+	}
+
+	fmt.Fprint(env.stdout, stdout.String())
+	fmt.Fprint(env.stderr, stderr.String())
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(runErr, &exitErr) {
+			return exitErr.ExitCode()
+		}
+		return 1
+	}
+	return 0
+}
+
+// isPopupAlreadyOpen recognises herdr's refusal to stack a second popup.
+//
+// Matching on the message rather than a code because plugin.pane.open reports
+// this as plugin_pane_open_failed — the same code it uses for unrelated
+// failures — so the code alone would turn any open error into a close.
+func isPopupAlreadyOpen(out string) bool {
+	return strings.Contains(out, "popup already open")
+}
+
+// isPopupNotOpen recognises popup.close's complaint that there was nothing to
+// close, which is a race rather than a fault.
+func isPopupNotOpen(msg string) bool {
+	return strings.Contains(msg, "popup_not_open")
 }
