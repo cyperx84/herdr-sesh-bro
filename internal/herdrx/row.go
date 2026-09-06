@@ -198,10 +198,19 @@ func agentStatusMatches(filter []herdr.AgentStatus, status herdr.AgentStatus) bo
 //   - label: name, else agent kind, else pane id
 //   - detail: "<kind|?> · <terminal_title_stripped|cwd|"">" — see
 //     agentDetail's doc comment for the trailing-space caveat (§9 S20)
-//   - sort: current-first, then agentRank, then name ascending (empty name
-//     sorts first within a rank, so unnamed agents lead), stable
-func AgentRows(agents []herdr.Agent, current, hide string, statusFilter []herdr.AgentStatus) []Row {
-	kept := make([]herdr.Agent, 0, len(agents))
+//   - sort: current-first, then agentRank, then most-recently-changed first,
+//     then name ascending (empty name sorts first within a rank, so unnamed
+//     agents lead), stable
+//
+// The state_change_seq tiebreak is new in 0.4.0 (BEHAVIOUR.md §10). Within one
+// status rank the bash ordered by name alone, which is stable but arbitrary:
+// of five blocked agents the one that just started asking you something sat
+// wherever the alphabet put it. Ordering by herdr's monotonic change counter
+// descending puts the newest transition first, which is the order a picker
+// aimed at "who needs me" wants. Name remains the final tiebreak so the sort
+// is still total and deterministic.
+func AgentRows(agents []Agent, current, hide string, statusFilter []herdr.AgentStatus) []Row {
+	kept := make([]Agent, 0, len(agents))
 	for _, a := range agents {
 		a.Status = NormalizeStatus(a.Status)
 		if hide != "" && a.WorkspaceID == hide {
@@ -220,6 +229,9 @@ func AgentRows(agents []herdr.Agent, current, hide string, statusFilter []herdr.
 		if ri, rj := agentRank(kept[i].Status), agentRank(kept[j].Status); ri != rj {
 			return ri < rj
 		}
+		if si, sj := kept[i].StateChangeSeq, kept[j].StateChangeSeq; si != sj {
+			return si > sj
+		}
 		return kept[i].Name < kept[j].Name
 	})
 
@@ -237,7 +249,7 @@ func AgentRows(agents []herdr.Agent, current, hide string, statusFilter []herdr.
 }
 
 // agentTarget is name, else pane id — see AgentRows's doc comment (§9 S18).
-func agentTarget(a herdr.Agent) string {
+func agentTarget(a Agent) string {
 	if a.Name != "" {
 		return a.Name
 	}
@@ -245,12 +257,12 @@ func agentTarget(a herdr.Agent) string {
 }
 
 // agentLabel is name, else agent kind, else pane id.
-func agentLabel(a herdr.Agent) string {
+func agentLabel(a Agent) string {
 	if a.Name != "" {
 		return a.Name
 	}
-	if a.Agent != nil && *a.Agent != "" {
-		return *a.Agent
+	if kind := a.Agent.Agent; kind != nil && *kind != "" {
+		return *kind
 	}
 	return a.PaneID
 }
@@ -267,10 +279,10 @@ func agentLabel(a herdr.Agent) string {
 // [UNVERIFIED that herdr never sends ""]; if that assumption is ever wrong,
 // this function is doing the right thing for the documented case and the
 // same (wrong) thing the bash does for the unverified one.
-func agentDetail(a herdr.Agent) string {
+func agentDetail(a Agent) string {
 	kind := "?"
-	if a.Agent != nil {
-		kind = *a.Agent
+	if k := a.Agent.Agent; k != nil {
+		kind = *k
 	}
 	title := a.TerminalTitleStripped
 	if title == "" {
@@ -360,4 +372,38 @@ func DirRows(paths []string, known map[string]bool, blacklist string) []Row {
 		})
 	}
 	return rows
+}
+
+// SplitAttention partitions assembled agent rows into the ones that want you
+// and everything else, preserving each group's existing relative order.
+//
+// "Attention" is blocked or done, and the choice of those two is herdr's own:
+// blocked means it recognised an approval or question UI, and done is the idle
+// state reached by work you have NOT looked at yet — herdr keeps an agent in
+// done until its tab is seen, then it becomes idle. So blocked-or-done is
+// exactly "has something for you that you haven't seen", and idle/working/
+// unknown are exactly "nothing to do here right now".
+//
+// The caller hoists the attention group above every other block, which is what
+// makes the picker open with the cursor already on whoever needs you rather
+// than on the workspace you are sitting in (BEHAVIOUR.md §10 supersedes the
+// current-first ordering of §2.2.4-5 for this case). Splitting here rather
+// than sorting inside AgentRows keeps the hoist a presentation decision the
+// `list` command can turn off (SESH_BRO_ATTENTION_FIRST) without changing how
+// rows are built.
+func SplitAttention(rows []Row) (attention, rest []Row) {
+	for _, r := range rows {
+		if r.Type == RowAgent && isAttentionStatus(r.Status) {
+			attention = append(attention, r)
+			continue
+		}
+		rest = append(rest, r)
+	}
+	return attention, rest
+}
+
+// isAttentionStatus reports whether a status means the agent wants the human.
+func isAttentionStatus(status string) bool {
+	return herdr.AgentStatus(status) == herdr.StatusBlocked ||
+		herdr.AgentStatus(status) == herdr.StatusDone
 }

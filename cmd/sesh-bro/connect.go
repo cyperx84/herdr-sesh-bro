@@ -6,9 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"time"
 
-	"github.com/cyperx84/herdr-sesh-bro/internal/config"
 	"github.com/cyperx84/herdr-sesh-bro/internal/external"
 	"github.com/cyperx84/herdr-sesh-bro/internal/herdrx"
 )
@@ -66,12 +64,11 @@ func connect(ctx context.Context, env *appEnv, client *herdrx.Client, openErr er
 // require the path to exist, zoxide-add it, and create a focused workspace
 // there.
 func connectDir(ctx context.Context, env *appEnv, client *herdrx.Client, openErr error, target string) error {
-	cfg := config.Load(env.getenv)
-	cachePath := paneCachePath(env.getenv)
-	// sesh-bro:300: `pane_list 2>/dev/null` — suppressed; a cache/daemon
-	// failure here just means "no existing pane found", falling through to
-	// the create branch below, not a connect failure of its own.
-	panes, _ := paneList(ctx, client, openErr, cachePath, cfg.CacheTTL, cfg.CacheTTLValid(), time.Now())
+	// sesh-bro:300: `pane_list 2>/dev/null` — suppressed; a daemon failure
+	// here just means "no existing pane found", falling through to the
+	// create branch below, not a connect failure of its own. The read is a
+	// session.snapshot now that the pane cache is gone (BEHAVIOUR.md §10).
+	panes := snapshotPanes(ctx, client, openErr)
 	if ws, ok := herdrx.WorkspaceForCWD(panes, target); ok {
 		if err := focusWorkspace(ctx, client, openErr, ws); err != nil {
 			fmt.Fprintf(env.stderr, "sesh-bro: failed to focus workspace %s\n", ws)

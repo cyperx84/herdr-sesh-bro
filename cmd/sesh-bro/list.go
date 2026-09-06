@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	herdr "github.com/cyperx84/herdr-api"
 
@@ -104,96 +103,134 @@ func cmdList(ctx context.Context, env *appEnv, args []string) int {
 // EXACT same logic `sesh-bro list` itself runs — reproducing bash's
 // `"$SELF" list ... | fzf`, just in-process instead of through a pipe to a
 // self-reinvoked subprocess.
-func listOutput(ctx context.Context, env *appEnv, args []string, w io.Writer) error {
-	// sesh-bro:131-143 runs before ANY dependency check — an unknown flag
-	// exits 2 even with herdr missing or the daemon down (BEHAVIOUR.md
-	// §2.2.11's own table: "unknown flag" is its own row, independent of
-	// the dependency rows).
-	flags, err := parseListFlags(args)
-	if err != nil {
-		return &listFlagError{err}
-	}
+// listSources is every input a row render needs, fetched once.
+//
+// Splitting the fetch from the render is what lets the live picker (Phase 4)
+// re-render on a herdr event without re-querying anything it already has, and
+// re-render a DIFFERENT view — workspaces only, blocked only — from the same
+// snapshot instead of re-execing `list` per keypress the way the fzf reload
+// binds used to. `list` itself calls the two back to back and is unchanged in
+// observable behaviour.
+type listSources struct {
+	snap    herdrx.Snapshot
+	current string // current workspace id, "" when unknown
+	hide    string // workspace id to omit, "" to omit nothing
+	zoxide  []string
+	git     *external.GitCache
+}
 
+// loadSources performs every read `list` needs: one session.snapshot, plus
+// zoxide and a git cache when the flags and config call for them.
+//
+// The flag gating is deliberately preserved rather than simplified into
+// "fetch everything". BEHAVIOUR.md §9 S1 makes a malformed SESH_BRO_DIR_SOURCES
+// an error only for a run that actually wants directories; evaluating it
+// unconditionally here would newly break `list --agents` on a machine with a
+// typo in that variable.
+func loadSources(ctx context.Context, env *appEnv, cfg config.Config, flags listFlags) (listSources, error) {
 	client, openErr := openHerdr(env.getenv)
 	if err := external.CheckListDeps(ctx, env.herdrBin, aliverFor(client, openErr)); err != nil {
-		return err
+		return listSources{}, err
 	}
 
-	cfg := config.Load(env.getenv)
-	current := herdrx.CurrentWorkspaceID(env.getenv("HERDR_WORKSPACE_ID"), env.getenv("HERDR_PLUGIN_CONTEXT_JSON"))
+	// One call replaces workspace.list + agent.list + pane.list twice, and
+	// with them the pane cache whose TTL bucket meant it almost never hit
+	// (BEHAVIOUR.md §10, superseding §7.3 and S4).
+	snap, err := loadSnapshot(ctx, client, openErr)
+	if err != nil {
+		return listSources{}, err
+	}
+
+	src := listSources{snap: snap, git: external.NewGitCache()}
+
+	src.current = herdrx.CurrentWorkspaceID(env.getenv("HERDR_WORKSPACE_ID"), env.getenv("HERDR_PLUGIN_CONTEXT_JSON"))
+	if src.current == "" {
+		// New in 0.4.0 (BEHAVIOUR.md §10, superseding §1.7/§2.2.3): fall back
+		// to whatever the daemon says is focused. The env vars are only set
+		// inside a herdr-spawned pane, so running the binary from a plain
+		// shell used to disable current-first ordering entirely and make
+		// --hide-current a silent no-op. The daemon knows the answer either
+		// way; there is no reason to pretend otherwise.
+		src.current = snap.FocusedWorkspace()
+	}
 
 	// sesh-bro:156: `[[ $hide_current -eq 1 || $CFG_HIDE_CURRENT -eq 1 ]]`
 	// short-circuits on the FLAG — a garbage SESH_BRO_HIDE_CURRENT does not
 	// crash `list --hide-current`, only a bare `list` with no flag and a
 	// bad config value does (S1, BEHAVIOUR.md §9). Evaluate the config bool
 	// ONLY when the flag itself didn't already decide the answer.
-	hide := ""
 	if flags.hideCurrent {
-		hide = current
+		src.hide = src.current
 	} else {
 		hc, err := cfg.HideCurrent()
 		if err != nil {
-			return err
+			return listSources{}, err
 		}
 		if hc {
-			hide = current
+			src.hide = src.current
 		}
 	}
 
-	// Workspace and agent blocks: sesh-bro:159-186. A herdr failure HERE is
-	// not swallowed — `ws_block="$(...)"` is a plain (non-`local`)
-	// assignment under `set -euo pipefail`, so a failing `herdr workspace
-	// list`/`agent list` aborts the whole script immediately (BEHAVIOUR.md
-	// §2.2.11: "fails mid-run → 1 ... stderr is herdr's"). This port cannot
-	// reproduce the herdr CLI's own stderr text (there is no CLI process in
-	// the loop to inherit stderr from) — it returns the wrapped herdrx
-	// error instead, which names the same underlying failure.
-	var wsRows, agRows []herdrx.Row
-	if flags.wantWS {
-		workspaces, err := listWorkspaces(ctx, client, openErr)
-		if err != nil {
-			return err
-		}
-		wsRows = herdrx.WorkspaceRows(workspaces, current, hide)
-	}
-	if flags.wantAgent {
-		agents, err := listAgents(ctx, client, openErr)
-		if err != nil {
-			return err
-		}
-		agRows = herdrx.AgentRows(agents, current, hide, flags.statuses)
-	}
-
-	// Directory block: sesh-bro:187-211, gated on want_dir AND
+	// Directory block inputs: sesh-bro:187-211, gated on want_dir AND
 	// $CFG_DIR_SOURCES AND zoxide on PATH. CFG_DIR_SOURCES is evaluated
-	// (and can crash, S1) ONLY when want_dir is true — same short-circuit
-	// discipline as hide_current above.
-	var dirRows []herdrx.Row
+	// (and can crash, S1) ONLY when want_dir is true.
 	if flags.wantDir {
 		dirSources, err := cfg.DirSources()
 		if err != nil {
-			return err
+			return listSources{}, err
 		}
 		if dirSources && external.ZoxideAvailable() {
-			cachePath := paneCachePath(env.getenv)
-			// sesh-bro:191: `pane_list 2>/dev/null ... || true` — suppressed;
-			// a failure here degrades to "nothing known", not a list failure.
-			panes, _ := paneList(ctx, client, openErr, cachePath, cfg.CacheTTL, cfg.CacheTTLValid(), time.Now())
-			known := herdrx.KnownCWDs(panes)
-			paths := external.ZoxideList(ctx)
-			dirRows = herdrx.DirRows(paths, known, cfg.Blacklist)
+			src.zoxide = external.ZoxideList(ctx)
 		}
 	}
 
-	raw := assembleBlocks(cfg.SortOrder, wsRows, agRows, dirRows)
+	return src, nil
+}
+
+// renderRows turns already-fetched sources into `list`'s output for one view.
+// It performs no I/O beyond writing to w and the git subprocesses the cache
+// has not already answered, so the live picker can call it once per view.
+func renderRows(ctx context.Context, cfg config.Config, flags listFlags, src listSources, w io.Writer) error {
+	var wsRows, agRows []herdrx.Row
+	if flags.wantWS {
+		wsRows = herdrx.WorkspaceRows(src.snap.Workspaces, src.current, src.hide)
+	}
+	if flags.wantAgent {
+		agRows = herdrx.AgentRows(src.snap.Agents, src.current, src.hide, flags.statuses)
+	}
+
+	var dirRows []herdrx.Row
+	if flags.wantDir && len(src.zoxide) > 0 {
+		known := herdrx.KnownCWDs(src.snap.Panes)
+		dirRows = herdrx.DirRows(src.zoxide, known, cfg.Blacklist)
+	}
+
+	// Attention hoist (BEHAVIOUR.md §10, superseding the ordering of
+	// §2.2.4-2.2.7). Blocked and done agents leave the agents block and go
+	// above every other block, from whichever workspace they belong to, so
+	// the cursor opens on whoever needs you instead of on the workspace you
+	// are already sitting in. Everything else keeps its existing order, and
+	// SESH_BRO_SORT_ORDER still governs the blocks below (S5's "a block
+	// absent from a non-empty sort_order is dropped" is unchanged — the
+	// hoist only reorders agent rows that were going to be emitted anyway).
+	attentionFirst, err := cfg.AttentionFirst()
+	if err != nil {
+		return err
+	}
+	var raw []herdrx.Row
+	if attentionFirst && flags.wantAgent {
+		attention, rest := herdrx.SplitAttention(agRows)
+		raw = append(raw, attention...)
+		raw = append(raw, assembleBlocks(cfg.SortOrder, wsRows, rest, dirRows)...)
+	} else {
+		raw = assembleBlocks(cfg.SortOrder, wsRows, agRows, dirRows)
+	}
 
 	// Git enrichment: sesh-bro:235-265, BEHAVIOUR.md §2.2.8 — JSON output
 	// skips it entirely (§2.2.9).
 	if !flags.asJSON && len(raw) > 0 && external.GitAvailable() {
-		cachePath := paneCachePath(env.getenv)
-		panes, _ := paneList(ctx, client, openErr, cachePath, cfg.CacheTTL, cfg.CacheTTLValid(), time.Now())
-		wsCWD := external.WorkspaceCWDs(panesToExternal(panes))
-		gitMap := external.GitEnrichment(ctx, "", wsCWD)
+		wsCWD := external.WorkspaceCWDs(panesToExternal(src.snap.Panes))
+		gitMap := src.git.Enrich(ctx, "", wsCWD)
 		for i := range raw {
 			if raw[i].Type != render.KindWorkspace {
 				continue
@@ -220,6 +257,24 @@ func listOutput(ctx context.Context, env *appEnv, args []string, w io.Writer) er
 		fmt.Fprint(w, line)
 	}
 	return nil
+}
+
+func listOutput(ctx context.Context, env *appEnv, args []string, w io.Writer) error {
+	// sesh-bro:131-143 runs before ANY dependency check — an unknown flag
+	// exits 2 even with herdr missing or the daemon down (BEHAVIOUR.md
+	// §2.2.11's own table: "unknown flag" is its own row, independent of
+	// the dependency rows).
+	flags, err := parseListFlags(args)
+	if err != nil {
+		return &listFlagError{err}
+	}
+
+	cfg := config.Load(env.getenv)
+	src, err := loadSources(ctx, env, cfg, flags)
+	if err != nil {
+		return err
+	}
+	return renderRows(ctx, cfg, flags, src, w)
 }
 
 // assembleBlocks reproduces sesh-bro:215-230 (BEHAVIOUR.md §2.2.7): with

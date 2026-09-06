@@ -12,6 +12,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+
+	herdr "github.com/cyperx84/herdr-api"
 	"strings"
 	"testing"
 
@@ -32,19 +34,28 @@ func fakeHerdrEnv(s *herdrtest.Server) map[string]string {
 
 // TestListWorkspacesAgainstFakeHerdr is the full success path for `list`:
 // dependency gate (herdr binary found + daemon Alive), the real
-// workspace.list RPC through the socket, row assembly, and --json output —
+// session.snapshot RPC through the socket, row assembly, and --json output —
 // every layer real except the daemon itself.
 func TestListWorkspacesAgainstFakeHerdr(t *testing.T) {
 	s := herdrtest.Start(t)
+	// `list` gates on the daemon being reachable before reading anything, and
+	// that probe is a workspace.list whose result is discarded (herdrx.Alive,
+	// BEHAVIOUR.md §7.1). It stayed a separate call when the data read
+	// collapsed into one session.snapshot (§10), so the fake needs both.
 	s.Handle("workspace.list", func(json.RawMessage) (any, error) {
-		return map[string]any{"workspaces": []map[string]any{{
-			"workspace_id": "w1",
-			"number":       1,
-			"label":        "alpha",
-			"pane_count":   2,
-			"tab_count":    1,
-			"agent_status": "working",
-		}}}, nil
+		return map[string]any{"workspaces": []map[string]any{}}, nil
+	})
+	s.Handle("session.snapshot", func(json.RawMessage) (any, error) {
+		return json.RawMessage(herdrtest.SnapshotFixture{
+			Workspaces: []herdr.Workspace{{
+				ID:        "w1",
+				Number:    1,
+				Label:     "alpha",
+				PaneCount: 2,
+				TabCount:  1,
+				Status:    herdr.StatusWorking,
+			}},
+		}.SnapshotJSON()), nil
 	})
 
 	var stdout, stderr bytes.Buffer
@@ -60,43 +71,37 @@ func TestListWorkspacesAgainstFakeHerdr(t *testing.T) {
   "detail": "2p/1t"
 }
 `
-	if got := stdout.String(); got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
-	}
-
-	// The server saw the traffic it should have: Alive() gates `list` with
-	// one workspace.list and listWorkspaces makes another (BEHAVIOUR.md
-	// §7.1's herdr_ok is literally a workspace.list with the result
-	// discarded), so exactly two calls — the RPC count is part of what
-	// these tests pin.
-	if calls := s.Calls("workspace.list"); len(calls) != 2 {
-		t.Errorf("Calls(workspace.list) = %d, want 2 (Alive gate + listWorkspaces)", len(calls))
+	if stdout.String() != want {
+		t.Errorf("stdout =\n%q\nwant\n%q", stdout.String(), want)
 	}
 }
 
-// TestListAgentsAgainstFakeHerdr pins the agent block of the same path:
-// agent.list through the socket and the agent row shape (target is the
-// NAME, detail is "<kind> · <title|cwd>" — §2.2.5's jq pipeline).
+// The agent path, plus the ordering 0.4.0 exists for: `list --agents` must put
+// the blocked agent first even though it sorts last alphabetically, and within
+// the blocked rank the newest state_change_seq wins.
 func TestListAgentsAgainstFakeHerdr(t *testing.T) {
 	s := herdrtest.Start(t)
 	kind := "claude"
-	// `list` gates on the daemon being reachable before it reads anything, and
-	// that probe is a workspace.list whose result is discarded (herdrx.Alive,
-	// BEHAVIOUR.md §7.1). Without a handler for it the fake answers "unknown
-	// method", Alive reports false, and the command exits 1 with "herdr daemon
-	// is not responding" before agent.list is ever called.
 	s.Handle("workspace.list", func(json.RawMessage) (any, error) {
 		return map[string]any{"workspaces": []map[string]any{}}, nil
 	})
-	s.Handle("agent.list", func(json.RawMessage) (any, error) {
-		return map[string]any{"agents": []map[string]any{{
-			"name":        "builder",
-			"agent":       kind,
-			"agent_status": "blocked",
-			"pane_id":     "p1",
-			"workspace_id": "w1",
-			"cwd":         "/tmp/x",
-		}}}, nil
+	s.Handle("session.snapshot", func(json.RawMessage) (any, error) {
+		return json.RawMessage(herdrtest.SnapshotFixture{
+			Agents: []herdrtest.SnapshotFixtureAgent{
+				{Agent: herdr.Agent{
+					Name: "alpha", Agent: &kind, Status: herdr.StatusIdle,
+					PaneID: "w1:p1", WorkspaceID: "w1", CWD: "/tmp/a",
+				}, StateChangeSeq: 50},
+				{Agent: herdr.Agent{
+					Name: "zulu", Agent: &kind, Status: herdr.StatusBlocked,
+					PaneID: "w1:p2", WorkspaceID: "w1", CWD: "/tmp/z",
+				}, StateChangeSeq: 10},
+				{Agent: herdr.Agent{
+					Name: "mike", Agent: &kind, Status: herdr.StatusBlocked,
+					PaneID: "w1:p3", WorkspaceID: "w1", CWD: "/tmp/m",
+				}, StateChangeSeq: 20},
+			},
+		}.SnapshotJSON()), nil
 	})
 
 	var stdout, stderr bytes.Buffer
@@ -104,26 +109,25 @@ func TestListAgentsAgainstFakeHerdr(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code = %d, want 0 (stderr: %q)", code, stderr.String())
 	}
-	want := `{
-  "type": "agent",
-  "target": "builder",
-  "status": "blocked",
-  "label": "builder",
-  "detail": "claude · /tmp/x"
-}
-`
-	if got := stdout.String(); got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
+	// mike before zulu: both blocked, mike changed more recently. alpha last:
+	// idle outranks nothing.
+	wantOrder := []string{`"target": "mike"`, `"target": "zulu"`, `"target": "alpha"`}
+	pos := -1
+	for _, frag := range wantOrder {
+		i := strings.Index(stdout.String(), frag)
+		if i < 0 {
+			t.Fatalf("stdout missing %s:\n%s", frag, stdout.String())
+		}
+		if i < pos {
+			t.Errorf("out of order at %s — want %v:\n%s", frag, wantOrder, stdout.String())
+		}
+		pos = i
 	}
-	if calls := s.Calls("agent.list"); len(calls) != 1 {
-		t.Errorf("Calls(agent.list) = %d, want 1", len(calls))
+	if !strings.Contains(stdout.String(), `"detail": "claude · /tmp/m"`) {
+		t.Errorf("agent detail wrong:\n%s", stdout.String())
 	}
 }
 
-// TestConnectWorkspaceAgainstFakeHerdr is `connect`'s success path: no
-// up-front dependency gate (§7.2 — connect never checks, it just fails if
-// the call fails), one workspace.focus RPC with the workspace id as
-// params, exit 0.
 func TestConnectWorkspaceAgainstFakeHerdr(t *testing.T) {
 	s := herdrtest.Start(t)
 	s.Handle("workspace.focus", func(params json.RawMessage) (any, error) {

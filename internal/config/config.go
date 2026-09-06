@@ -33,14 +33,13 @@
 // boolean-flavoured variables' S1 crash-or-not guard (PreviewEnabled,
 // HideCurrent, DirSources — see ParseBoolFlag), and small derived
 // conveniences for the variables nobody else touches yet (DefaultFilterFlag,
-// CacheTTLValid, Icons).
+// Icons).
 package config
 
 import (
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 	"strconv"
 
 	"github.com/cyperx84/herdr-sesh-bro/internal/picker"
@@ -73,15 +72,6 @@ type Config struct {
 	// + pathname-expansion mess, which is not reproducible in Go and is
 	// called out there, not duplicated here.
 	Blacklist string
-
-	// CacheTTL is CFG_CACHE_TTL (sesh-bro:39), raw. Unlike the three above,
-	// nothing else in this port resolves it yet — see CacheTTLValid for the
-	// one guard this package does provide: syntactic validity as a
-	// `find -mmin` operand. The BSD-vs-GNU bucket-timing semantics
-	// (BEHAVIOUR.md §9 S4) belong to whichever package implements the
-	// actual pane-cache freshness check; they are platform behaviour, not
-	// config parsing.
-	CacheTTL string
 
 	// DefaultFilter is CFG_DEFAULT_FILTER (sesh-bro:40), raw. See
 	// DefaultFilterFlag for the enum-to-flag guard bash applies at
@@ -147,6 +137,12 @@ type Config struct {
 	// SESH_BRO_PREVIEW_ENABLED value must not make `create` fail — an
 	// eager Load-time validation covering all three would do exactly that,
 	// which is a behaviour change disguised as a config-loading nicety.
+	// attentionFirstRaw holds SESH_BRO_ATTENTION_FIRST, new in 0.4.0. It
+	// follows the same lazy-parse discipline as the three below for the same
+	// reason: only `list` and the picker consult it, so a malformed value
+	// must not break `create` or `worktree`.
+	attentionFirstRaw string
+
 	previewEnabledRaw string
 	hideCurrentRaw    string
 	dirSourcesRaw     string
@@ -178,7 +174,6 @@ func Load(getenv func(string) string) Config {
 		PreviewWidth:      orDefault(getenv("SESH_BRO_PREVIEW_WIDTH"), "60%"),
 		Aliases:           orDefault(getenv("SESH_BRO_ALIASES"), ""),
 		Blacklist:         orDefault(getenv("SESH_BRO_BLACKLIST"), ""),
-		CacheTTL:          orDefault(getenv("SESH_BRO_CACHE_TTL"), "2"),
 		DefaultFilter:     orDefault(getenv("SESH_BRO_DEFAULT_FILTER"), "all"),
 		SortOrder:         orDefault(getenv("SESH_BRO_SORT_ORDER"), ""),
 		IconWorkspace:     orDefault(getenv("SESH_BRO_ICON_WORKSPACE"), "◆"),
@@ -191,6 +186,7 @@ func Load(getenv func(string) string) Config {
 		KeyAll:            orDefault(getenv("SESH_BRO_KEY_ALL"), "ctrl-o"),
 		KeyCreate:         orDefault(getenv("SESH_BRO_KEY_CREATE"), "ctrl-/"),
 		KeyClose:          orDefault(getenv("SESH_BRO_KEY_CLOSE"), "alt-x"),
+		attentionFirstRaw: orDefault(getenv("SESH_BRO_ATTENTION_FIRST"), "1"),
 		previewEnabledRaw: orDefault(getenv("SESH_BRO_PREVIEW_ENABLED"), "1"),
 		hideCurrentRaw:    orDefault(getenv("SESH_BRO_HIDE_CURRENT"), "0"),
 		dirSourcesRaw:     orDefault(getenv("SESH_BRO_DIR_SOURCES"), "1"),
@@ -258,6 +254,15 @@ func ParseBoolFlag(name, val string) (bool, error) {
 // reference this variable — see the Config.previewEnabledRaw doc comment).
 func (c Config) PreviewEnabled() (bool, error) {
 	return ParseBoolFlag("SESH_BRO_PREVIEW_ENABLED", c.previewEnabledRaw)
+}
+
+// AttentionFirst reports whether blocked and done agents are hoisted above
+// every other block, so the picker opens with the cursor on whoever needs the
+// human (BEHAVIOUR.md §10). Default on: the whole point of the 0.4.0 picker is
+// that the answer to "does anything want me" is already on screen. Turning it
+// off restores the pre-0.4.0 current-workspace-first ordering.
+func (c Config) AttentionFirst() (bool, error) {
+	return ParseBoolFlag("SESH_BRO_ATTENTION_FIRST", c.attentionFirstRaw)
 }
 
 // HideCurrent reproduces `[[ $CFG_HIDE_CURRENT -eq 1 ]]` (sesh-bro:156,
@@ -336,30 +341,4 @@ func (c Config) DefaultFilterFlag() (flag string, ok bool) {
 	}
 	flag, ok = defaultFilterFlags[c.DefaultFilter]
 	return flag, ok
-}
-
-// cacheTTLOperandPattern matches every operand GNU/BSD `find -mmin` accepts
-// syntactically: an optional leading sign, then one or more digits.
-var cacheTTLOperandPattern = regexp.MustCompile(`^[+-]?[0-9]+$`)
-
-// CacheTTLValid reports whether CacheTTL is syntactically an operand
-// `find -mmin` accepts. Bash never validates SESH_BRO_CACHE_TTL — it
-// interpolates the raw value straight into `find "$cache" -mmin
-// "$CFG_CACHE_TTL"` (sesh-bro:109) — so a non-numeric value doesn't crash
-// sesh-bro at all, it makes `find` itself fail; find's own stderr is
-// suppressed (`2>/dev/null`) and `grep -q .` then sees no output, so the
-// pane cache silently, PERMANENTLY misses forever, with no diagnostic
-// (BEHAVIOUR.md §9 S4). CacheTTLValid gives whoever implements that
-// freshness check a cheap way to short-circuit straight to "always miss"
-// instead of actually invoking `find` (or a Go stand-in for it) to
-// discover the same thing empirically every time.
-//
-// This function reports SYNTAX only. It does not attempt BSD find's
-// documented (and, per BEHAVIOUR.md §9 S4, truncating on Darwin 27)
-// `-mmin` bucket-timing semantics, nor GNU find's — which BEHAVIOUR.md
-// marks [UNVERIFIED] for lack of a Linux reference machine. That
-// platform-dependent freshness math belongs with whatever package owns
-// the actual pane-cache file, not config parsing.
-func (c Config) CacheTTLValid() bool {
-	return cacheTTLOperandPattern.MatchString(c.CacheTTL)
 }

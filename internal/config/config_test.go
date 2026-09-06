@@ -22,7 +22,6 @@ func TestLoad_Defaults(t *testing.T) {
 		PreviewWidth:  "60%",
 		Aliases:       "",
 		Blacklist:     "",
-		CacheTTL:      "2",
 		DefaultFilter: "all",
 		SortOrder:     "",
 		IconWorkspace: "◆",
@@ -40,7 +39,6 @@ func TestLoad_Defaults(t *testing.T) {
 		PreviewWidth:  c.PreviewWidth,
 		Aliases:       c.Aliases,
 		Blacklist:     c.Blacklist,
-		CacheTTL:      c.CacheTTL,
 		DefaultFilter: c.DefaultFilter,
 		SortOrder:     c.SortOrder,
 		IconWorkspace: c.IconWorkspace,
@@ -79,9 +77,6 @@ func TestLoad_EmptyValueFallsBackToDefault(t *testing.T) {
 	}))
 	if c.PreviewWidth != "60%" {
 		t.Errorf("PreviewWidth = %q, want default 60%%", c.PreviewWidth)
-	}
-	if c.CacheTTL != "2" {
-		t.Errorf("CacheTTL = %q, want default 2", c.CacheTTL)
 	}
 }
 
@@ -128,7 +123,7 @@ func TestLoad_NonEmptyOverridesDefault(t *testing.T) {
 	}
 	c := Load(envMap(env))
 	if c.PreviewWidth != "40%" || c.Aliases != "dev=Development" || c.Blacklist != "/tmp/*:/var/*" ||
-		c.CacheTTL != "10" || c.DefaultFilter != "agents" || c.SortOrder != "agents,dirs" ||
+		c.DefaultFilter != "agents" || c.SortOrder != "agents,dirs" ||
 		c.IconWorkspace != "W" || c.IconAgent != "A" || c.IconDir != "D" {
 		t.Fatalf("Load did not thread every overridden value through: %+v", c)
 	}
@@ -274,24 +269,6 @@ func TestDefaultFilterFlag(t *testing.T) {
 	}
 }
 
-// TestCacheTTLValid covers the syntax find -mmin accepts: an optional
-// leading sign then digits. This is SYNTAX only (see CacheTTLValid's doc
-// comment) — it says nothing about the BSD/GNU bucket-timing semantics.
-func TestCacheTTLValid(t *testing.T) {
-	valid := []string{"2", "0", "10", "+5", "-1", "-1440"}
-	invalid := []string{"abc", "2.5", "", "2m", " 2", "2 ", "--2"}
-	for _, v := range valid {
-		if c := (Config{CacheTTL: v}); !c.CacheTTLValid() {
-			t.Errorf("CacheTTLValid(%q) = false, want true", v)
-		}
-	}
-	for _, v := range invalid {
-		if c := (Config{CacheTTL: v}); c.CacheTTLValid() {
-			t.Errorf("CacheTTLValid(%q) = true, want false", v)
-		}
-	}
-}
-
 // TestIcons asserts the render.Icons convenience is a plain field copy —
 // no transformation, no default substitution (Load already applied
 // defaults by the time Icons is called).
@@ -397,5 +374,48 @@ func TestLoad_MalformedKeyDegradesOnlyInPicker(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("close bind fell back to the default alt-x, but %q was not found in argv %v", wantCloseBind, args)
+	}
+}
+
+// AttentionFirst defaults on — the 0.4.0 picker's whole premise is that
+// "does anything need me" is answered before you type.
+func TestAttentionFirstDefaultsOn(t *testing.T) {
+	c := Load(func(string) string { return "" })
+	on, err := c.AttentionFirst()
+	if err != nil {
+		t.Fatalf("AttentionFirst() error = %v", err)
+	}
+	if !on {
+		t.Error("AttentionFirst() = false, want true by default")
+	}
+}
+
+func TestAttentionFirstOff(t *testing.T) {
+	c := Load(func(k string) string {
+		if k == "SESH_BRO_ATTENTION_FIRST" {
+			return "0"
+		}
+		return ""
+	})
+	on, err := c.AttentionFirst()
+	if err != nil {
+		t.Fatalf("AttentionFirst() error = %v", err)
+	}
+	if on {
+		t.Error("AttentionFirst() = true, want false")
+	}
+}
+
+// A malformed value errors at the point of use, like the other three lazily
+// parsed booleans (BEHAVIOUR.md §9 S1) — it must not break `create`.
+func TestAttentionFirstMalformed(t *testing.T) {
+	c := Load(func(k string) string {
+		if k == "SESH_BRO_ATTENTION_FIRST" {
+			return "yes"
+		}
+		return ""
+	})
+	if _, err := c.AttentionFirst(); err == nil {
+		t.Error("AttentionFirst() error = nil, want a parse error for \"yes\"")
 	}
 }

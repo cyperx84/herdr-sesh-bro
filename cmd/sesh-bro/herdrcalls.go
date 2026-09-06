@@ -67,3 +67,25 @@ func getAgent(ctx context.Context, client *herdrx.Client, openErr error, target 
 	}
 	return client.GetAgent(ctx, target)
 }
+
+// loadSnapshot is `session.snapshot` — the whole session in one round trip.
+// It replaces the workspace.list + agent.list + pane.list×2 fan-out `list`
+// used to perform, so it is also what retired the pane cache (BEHAVIOUR.md
+// §10).
+func loadSnapshot(ctx context.Context, client *herdrx.Client, openErr error) (herdrx.Snapshot, error) {
+	if openErr != nil {
+		return herdrx.Snapshot{}, openErr
+	}
+	return client.SessionSnapshot(ctx)
+}
+
+// snapshotPanes is the panes of a session.snapshot, or nil if the snapshot
+// fails. It exists for the call sites BEHAVIOUR.md documents as swallowing a
+// pane-read failure into "nothing known" rather than surfacing it.
+func snapshotPanes(ctx context.Context, client *herdrx.Client, openErr error) []herdr.Pane {
+	snap, err := loadSnapshot(ctx, client, openErr)
+	if err != nil {
+		return nil
+	}
+	return snap.Panes
+}

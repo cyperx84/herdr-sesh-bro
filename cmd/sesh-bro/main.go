@@ -254,7 +254,7 @@ flags:
 environment:
   HERDR_BIN_PATH     the herdr binary to use (default: herdr on PATH)
   SESH_BRO_*         config overrides (preview_width, hide_current, dir_sources,
-                     cache_ttl, default_filter, blacklist, icons, keys, aliases...)
+                     attention_first, default_filter, blacklist, icons, keys, aliases...)
 `)
 	return b.String()
 }

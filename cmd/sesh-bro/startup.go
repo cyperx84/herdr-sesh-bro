@@ -7,7 +7,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/cyperx84/herdr-sesh-bro/internal/external"
 )
@@ -18,9 +17,6 @@ func cmdStartup(ctx context.Context, env *appEnv) int {
 		fmt.Fprintln(env.stderr, err)
 		return 1
 	}
-	// sesh-bro:123: `rm -f ... 2>/dev/null || true` — failure ignored
-	// unconditionally, including "file does not exist".
-	_ = os.Remove(paneCachePath(env.getenv))
 	fmt.Fprintln(env.stdout, "sesh-bro: deps ok")
 	return 0
 }

@@ -168,7 +168,7 @@ schema exposes. Set them in your shell, or via Herdr's config UI:
 | `SESH_BRO_PREVIEW_ENABLED` | `1` | `0` disables the preview pane |
 | `SESH_BRO_HIDE_CURRENT` | `0` | `1` hides the current workspace + its agents |
 | `SESH_BRO_DIR_SOURCES` | `1` | `0` disables zoxide directory entries |
-| `SESH_BRO_CACHE_TTL` | `2` | Pane-list cache TTL in minutes |
+| `SESH_BRO_ATTENTION_FIRST` | `1` | `0` keeps the old current-workspace-first order instead of hoisting blocked/done agents |
 | `SESH_BRO_DEFAULT_FILTER` | `all` | `workspaces`/`agents`/`dirs`/`blocked` |
 | `SESH_BRO_BLACKLIST` | *(empty)* | Colon-separated globs to exclude (dirs) |
 | `SESH_BRO_SORT_ORDER` | *(default)* | e.g. `agents,dirs,workspaces` |
@@ -197,15 +197,6 @@ workspaces · ...`) always reflects the key actually bound.
 - `HERDR_PLUGIN_ID` / `HERDR_PLUGIN_CONTEXT_JSON` / `HERDR_WORKSPACE_ID` —
   provided by Herdr when the plugin runs.
 - `SESH_BRO_ARGS` — flags carried into a plugin-opened picker (space-delimited).
-- `SESH_BRO_PANE_CACHE` — override the pane-list cache path (defaults to a
-  per-user temp file).
-
-## GitHub worktree links
-
-With a GitHub issue or PR URL visible in any pane, **ctrl-click** it. Sesh-bro
-extracts `owner/repo` and the number, resolves the title via `gh` (cached for
-24h), and:
-
 - focuses the existing workspace if its repo-qualified identity matches that
   issue — equal issue numbers in different owners/repositories stay distinct;
   legacy number-only labels are recognized only when Herdr's worktree/path

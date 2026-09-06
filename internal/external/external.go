@@ -51,6 +51,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -302,19 +303,78 @@ type Pane struct {
 // is present (e.g. having just checked for a sibling reason) doesn't pay
 // for a redundant PATH lookup.
 func GitEnrichment(ctx context.Context, gitBin string, wsCWD map[string]string) map[string]GitStatus {
+	return NewGitCache().Enrich(ctx, gitBin, wsCWD)
+}
+
+// GitCache is GitEnrichment with memory: one `git status` per working
+// directory for as long as the cache lives, instead of one per call.
+//
+// A one-shot `list` never notices the difference — it enriches once and
+// exits, which is why GitEnrichment above is still the whole story for that
+// path. The live picker is the reason this exists: it re-renders rows on
+// every herdr event, and re-running a serial `git status` across every
+// workspace on each of those would make an agent going blocked cost a burst
+// of subprocesses and visible lag in the list. Workspace count is small and
+// a picker is open for seconds to minutes, so caching for the process's
+// lifetime is the right trade: a branch switched in another terminal shows
+// up the next time the picker opens, which is the same freshness the
+// pre-0.4.0 pane cache gave and nobody noticed.
+//
+// Negative results are cached too — a workspace whose cwd is not a repo must
+// not be re-probed on every event just because it produced no entry.
+type GitCache struct {
+	mu   sync.Mutex
+	seen map[string]GitStatus // cwd -> status; absent value means "no entry"
+	miss map[string]bool      // cwd -> probed and produced nothing
+}
+
+// NewGitCache returns an empty cache. The zero value is not usable; the maps
+// are allocated here rather than lazily so Enrich has one less branch.
+func NewGitCache() *GitCache {
+	return &GitCache{seen: map[string]GitStatus{}, miss: map[string]bool{}}
+}
+
+// Enrich maps workspace id -> git status for every workspace whose cwd is a
+// repo, running git only for directories this cache has not seen. The
+// contract is otherwise identical to GitEnrichment: callers gate on
+// GitAvailable() themselves, and a cwd that is not a repo or yields no
+// parseable branch simply gets no entry.
+func (g *GitCache) Enrich(ctx context.Context, gitBin string, wsCWD map[string]string) map[string]GitStatus {
 	out := make(map[string]GitStatus, len(wsCWD))
 	for ws, cwd := range wsCWD {
-		output, ok := runGitStatusBranch(ctx, gitBin, cwd)
+		gs, ok := g.lookup(ctx, gitBin, cwd)
 		if !ok {
 			continue
 		}
-		branch, dirty := ParseGitStatusBranch(output)
-		if branch == "" {
-			continue
-		}
-		out[ws] = GitStatus{Branch: branch, Dirty: dirty}
+		out[ws] = gs
 	}
 	return out
+}
+
+// lookup returns cwd's cached status, probing git the first time only.
+func (g *GitCache) lookup(ctx context.Context, gitBin, cwd string) (GitStatus, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if gs, ok := g.seen[cwd]; ok {
+		return gs, true
+	}
+	if g.miss[cwd] {
+		return GitStatus{}, false
+	}
+
+	output, ok := runGitStatusBranch(ctx, gitBin, cwd)
+	if !ok {
+		g.miss[cwd] = true
+		return GitStatus{}, false
+	}
+	branch, dirty := ParseGitStatusBranch(output)
+	if branch == "" {
+		g.miss[cwd] = true
+		return GitStatus{}, false
+	}
+	gs := GitStatus{Branch: branch, Dirty: dirty}
+	g.seen[cwd] = gs
+	return gs, true
 }
 
 // GitRoot runs `git -C <cwd> rev-parse --show-toplevel`, reproducing

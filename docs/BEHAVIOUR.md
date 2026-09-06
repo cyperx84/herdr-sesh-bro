@@ -1599,6 +1599,81 @@ visible text ends with a space before the reset. Reproduce it; don't trim.
 
 ---
 
+## 10. Supersessions (0.4.0)
+
+This document specifies the bash at `0d683a3`, and where the Go port diverges from it the
+divergence is recorded here rather than by quietly editing the section above. Each entry names
+what changed, which section it supersedes, and why — the preamble's rule ("a port that fixes
+the bash silently is a different tool") still holds; these are deliberate, argued changes, not
+drift.
+
+### 10.1 One `session.snapshot` replaces four reads, and the pane cache is gone
+
+*Supersedes §6 rows #1/#5/#9/#10, §7.3, §5's `cache_ttl` row, and §9 S4.*
+
+`list` made four daemon reads per invocation — `workspace.list`, `agent.list`, and `pane.list`
+twice — and the pane-cache file existed to soften the last two. `session.snapshot` returns
+workspaces, tabs, panes and agents in one round trip, so the fan-out and the cache both go.
+
+The cache is deleted rather than fixed. S4 documents its TTL bucket faithfully reproducing
+`find -mmin` semantics, under which the default `cache_ttl=2` means a cache written 0–119s ago
+**misses**, 120–179s hits, and ≥180s misses again: it almost never hit. Keeping a file cache
+with a documented-bizarre hit window in front of a call that no longer needs one would be
+preserving a bug for its own sake. `SESH_BRO_CACHE_TTL` and `SESH_BRO_PANE_CACHE` are removed,
+as is the manifest's `cache_ttl` setting.
+
+The liveness probe is deliberately NOT folded in: `herdrx.Alive` still makes its own
+`workspace.list` and discards the result (§7.1), because that gate runs before the port is
+willing to read anything at all.
+
+### 10.2 Attention-first ordering
+
+*Supersedes the block ordering of §2.2.4, §2.2.5 and §2.2.7 when it applies.*
+
+Agent rows whose status is `blocked` or `done` are hoisted above every other block, from
+whichever workspace they belong to. Those two states are precisely herdr's "has something for
+you that you have not seen": `blocked` means it recognised an approval or question UI, and
+`done` is the idle state reached by unseen background work, which stays `done` until you look
+at the tab.
+
+The old ordering put the current workspace and its agents first, which meant the picker opened
+with the cursor on the workspace you were already sitting in — the one place you did not need
+to be taken to. Everything below the hoisted rows keeps its previous order, and
+`SESH_BRO_SORT_ORDER` still governs those blocks (S5's "a block absent from a non-empty
+sort_order is dropped entirely" is unchanged: the hoist only reorders agent rows that were
+going to be emitted anyway). Set `SESH_BRO_ATTENTION_FIRST=0` for the old order.
+
+### 10.3 Recency tiebreak within a status rank
+
+*Supersedes §2.2.5's sort description.*
+
+Agent rows now sort by `(current-first, rank, state_change_seq descending, name)`. The bash
+broke ties inside a rank by name alone, so of five blocked agents the one that just started
+asking you something sat wherever the alphabet put it. `state_change_seq` is herdr's global
+monotonic change counter — not a timestamp, and not comparable as a duration, but exactly
+enough to answer "which of these changed most recently". Name remains the final tiebreak, so
+the order is still total and deterministic.
+
+### 10.4 Current workspace falls back to the daemon's focus
+
+*Supersedes §1.7 point 3 and §2.2.3.*
+
+`HERDR_WORKSPACE_ID` and `HERDR_PLUGIN_CONTEXT_JSON` are only set inside a pane herdr spawned.
+When both are absent the bash treated the current workspace as unknown, which silently disabled
+current-first ordering and made `--hide-current` a no-op. The port now falls back to
+`session.snapshot`'s `focused_workspace_id`. The daemon knows the answer in both cases and
+there is no reason to pretend otherwise; `--hide-current` from a plain shell now hides the
+workspace the user is actually looking at.
+
+### 10.5 `SESH_BRO_KEY_CLOSE` defaults to `alt-x`
+
+*Supersedes §5's key table row.*
+
+The 0.3.0 default was `ctrl-q`, one of fzf's four documented abort keys, so the keystroke fzf
+trains users to press for "get me out of here" silently closed a workspace and every agent in
+it. `internal/picker`'s own default had always said `alt-x` and explained why; the two
+disagreed and config won. They are now pinned together by a test.
+
 ## Appendix A — exit code reference
 
 | Command | 0 | 1 | 2 |
