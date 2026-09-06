@@ -35,13 +35,11 @@ type Features struct {
 	// Footer is --footer, fzf 0.72, so the key hints can leave the header and
 	// let the header carry live status counts instead.
 	Footer bool
-	// Every is the every(N) timer bind, fzf 0.73. Unused by the push-based
-	// design and detected only so a future timed fallback can ask.
+	// Every is the every(N) timer bind, fzf 0.73. Nothing uses it: updates
+	// are pushed, so there is no timer. It is detected because a fallback for
+	// an fzf that has every() but not --listen is a plausible future, and
+	// probing one more threshold costs nothing.
 	Every bool
-	// TransformPut is `transform` emitting a bare `put`, fzf 0.74 — the only
-	// way to make a bare digit mean "jump to row N" when the query is empty
-	// and "type a digit" otherwise.
-	TransformPut bool
 }
 
 // versionRe matches the leading version in `fzf --version` output, which is
@@ -79,12 +77,11 @@ func Detect(run func(name string, args ...string) ([]byte, error)) Features {
 
 	v := strconv.Itoa(major) + "." + strconv.Itoa(minor) + "." + strconv.Itoa(patch)
 	return Features{
-		Version:      v,
-		Listen:       atLeast(0, 66),
-		TrackID:      atLeast(0, 71),
-		Footer:       atLeast(0, 72),
-		Every:        atLeast(0, 73),
-		TransformPut: atLeast(0, 74),
+		Version: v,
+		Listen:  atLeast(0, 66),
+		TrackID: atLeast(0, 71),
+		Footer:  atLeast(0, 72),
+		Every:   atLeast(0, 73),
 	}
 }
 

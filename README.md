@@ -206,9 +206,9 @@ you usable at all.
 
 The counts line is pinned at the top and updates with the list.
 
-This needs **fzf 0.66+** for the push, **0.71+** for cursor tracking, **0.72+**
-for the footer, and **0.74+** for the opt-in digit jump. Everything is detected
-and every absence degrades rather than fails — on an older fzf the picker opens
+This needs **fzf 0.66+** for the push, **0.71+** for cursor tracking, and
+**0.72+** for the footer. Everything is detected and every absence degrades
+rather than fails — on an older fzf the picker opens
 exactly as it did before, showing the session as of the moment you pressed the
 key. `sesh-bro startup` reports which features your fzf has.
 

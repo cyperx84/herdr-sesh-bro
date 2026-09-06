@@ -29,10 +29,10 @@ func TestDetectThresholds(t *testing.T) {
 		if got.Version != tc.version {
 			t.Errorf("%q: Version = %q, want %q", tc.out, got.Version, tc.version)
 		}
-		if got.Listen != tc.listen || got.TrackID != tc.track || got.Footer != tc.footer ||
-			got.Every != tc.every || got.TransformPut != tc.transformPut {
-			t.Errorf("%q: got %+v, want listen=%v track=%v footer=%v every=%v put=%v",
-				tc.out, got, tc.listen, tc.track, tc.footer, tc.every, tc.transformPut)
+		if got.Listen != tc.listen || got.TrackID != tc.track ||
+			got.Footer != tc.footer || got.Every != tc.every {
+			t.Errorf("%q: got %+v, want listen=%v track=%v footer=%v every=%v",
+				tc.out, got, tc.listen, tc.track, tc.footer, tc.every)
 		}
 	}
 }

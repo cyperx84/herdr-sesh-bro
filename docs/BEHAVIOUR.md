@@ -1686,11 +1686,11 @@ Push rather than poll. A timer would have to re-query the daemon forever to
 discover that nothing happened, on a machine already running a dozen agents.
 Events cost nothing while the session is quiet.
 
-Four fzf features carry this, each detected and each degrading rather than
+Three fzf features carry this, each detected and each degrading rather than
 failing (`internal/picker.Features`): `--listen` (0.66) for the push,
 `--track --id-nth` (0.71) so the cursor follows the row's target rather than
-its index, `--footer` (0.72) so the key hints leave the header, and
-`transform`+`put` (0.74) for the opt-in digit jump. An fzf below 0.66 gets
+its index, and `--footer` (0.72) so the key hints leave the header. An fzf
+below 0.66 gets
 exactly the 0.3.0 picker: a snapshot of the moment you pressed the key.
 
 Three consequences worth stating:
