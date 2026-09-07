@@ -5,7 +5,49 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-09-07
+
+The theme: sesh-bro became drivable by another coding agent, and gained a
+fourth source.
+
+### Added
+- **`sesh-bro --skill`** prints `docs/AGENTS.md` — the commands, exit codes and
+  output shapes another program needs. A coverage test walks the command table
+  against it, so a command cannot exist without being documented.
+- **`agents`** — `list --agents` without the flag-order trap. In the long form a
+  status flag clears earlier source flags, so `--blocked --agents` and
+  `--agents --blocked` differ and the wrong order returns a plausible wrong
+  answer rather than an error.
+- **`wait --target A --until blocked,done`** blocks until an agent settles,
+  using herdr's server-side wait rather than a poll. Exit 3 on timeout.
+- **`read TARGET --source recent-unwrapped`** prints an agent's scrollback
+  rather than just the visible viewport — typically twice as much.
+- **`next --dry-run`** reports who needs attention without focusing them.
+  Focusing a `done` agent marks it seen, so a survey that focused would destroy
+  the signal it was surveying.
+- **`--jsonl`** on row commands: one compact object per line. `--json` emits
+  concatenated pretty objects that `json.loads` cannot parse in one call, and
+  is pinned that way for compatibility.
+- **Git worktrees as a fourth source** (`^t`). Shows worktrees on disk with no
+  workspace open — anything already open is skipped, since the workspace source
+  lists it. Enter opens one.
+- **`last` and `root` are bindable plugin actions** (closes #2). Both worked as
+  commands and neither was declared in the manifest, so `sesh-bro.last` had
+  nothing to bind to.
+- **Exit codes an agent can branch on**: 0 success, 1 runtime failure, 2 usage
+  error, **3 nothing matched**. Without the last one, a quiet queue and a broken
+  daemon are indistinguishable without reading English.
+
+### Changed
+- sesh-bro **finds the running herdr session itself** via `herdr session list`,
+  so every command works from an ordinary shell. Previously anything outside a
+  herdr-spawned pane failed on a missing environment variable. It refuses to
+  guess when several sessions run and none is default, because every herdr call
+  is scoped to the socket it dialled and attaching to the wrong one is
+  undetectable downstream.
+- Dispatch and usage generate from one command table, so they cannot disagree.
+- `next` exits 3 rather than 0 when nothing needs attention.
+
 
 ### Changed
 - **The live picker stopped paying for itself.** Opening it read the session
