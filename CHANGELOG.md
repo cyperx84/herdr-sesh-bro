@@ -5,6 +5,69 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-09-07
+
+The theme: acting on agents, not just finding them. Everything here is a
+command before it is a keybind, so a driving agent gets it on the same terms a
+human does.
+
+### Added
+- **`prompt`** sends text to one or more agents as if typed. Its wait set
+  includes `blocked`, which is the point: the agent you most want to answer is
+  the one sitting on an approval prompt. `--all-blocked` targets every waiting
+  agent, `--from-file` takes the picker's multi-selection, and `--text -` reads
+  stdin. Several targets report one result each, and one failure never abandons
+  the batch.
+- **`reply`** is `prompt` with the typing removed — canned answers, one per
+  line in `replies.txt` beside the state file, sent with `ctrl-y` from the
+  picker. It refuses any agent that is not blocked, exiting 3, so pressing the
+  key on the wrong row does nothing. That refusal is what makes a one-keypress
+  answer safe enough to sit beside the filter keys.
+- **`star`** pins an agent to the top of **its own status group**, on `ctrl-s`.
+  Within the rank, never above it: a pinned idle agent leads the idle ones and
+  still sits below every blocked agent, so a pin cannot bury something that
+  actually needs a human. Named agents are pinned by name and survive their
+  pane being recreated; an unnamed agent is pinned by pane id and the pin dies
+  with the pane. sesh-bro will not rename an agent on your behalf to make a pin
+  durable.
+- **Multi-select and a close that shows you what it will destroy.** `tab`
+  selects; `alt-x` prints every row it will close, by label, and reads y/N from
+  `/dev/tty`. Non-workspace rows are reported rather than silently dropped, and
+  headless use requires `--yes`, which is mandatory when stdin is not a tty.
+  Note that `enter` on a multi-selection connects to the **first** row.
+- **`SESH_BRO_KEY_WORKTREES` and `SESH_BRO_KEY_STAR`** are now read. Both keys
+  existed in 0.5.0 and neither was overridable — the config never looked at the
+  variables, so any value set was ignored in favour of the default.
+- **`list --view-dir DIR`** renders whichever view a picker runtime directory's
+  marker says is on screen. Internal plumbing for the binds below.
+
+### Fixed
+- **A star now appears the moment you press the key.** The bind reloaded
+  through `rows`, which cats the row file rendered *before* the toggle.
+  Starring moves no herdr state, so no event fires, so nothing ever re-rendered
+  those files: the pin stayed invisible until some unrelated event happened to
+  repaint. Close and create moved to the same fresh-render bind, one step
+  weaker — they do fire events, but the reload ran first and showed the closed
+  workspace still sitting there until the push landed. The filter keys stay on
+  the cheap pre-rendered path; they change what is on screen without changing
+  what is true.
+- **`stars.json` grew forever.** `stars.Prune` had no caller. It now runs in
+  `startup` beside the attention prune, judging agent-kind stars against live
+  agent *names* rather than the pane map.
+- **`WithStars` sorted with a comparator that is not a strict weak ordering.**
+  It reported every cross-rank pair equal in both directions while ordering
+  same-rank pairs, so equality was not transitive and the sort was free to emit
+  any permutation. Replaced with a stable partition inside contiguous runs of
+  equal status, which also stops a star crossing the current-workspace
+  boundary into the group above it.
+
+### Not built, on purpose
+- **Approve-all / auto-yes.** Recorded with its reasoning in
+  `docs/FEATURE-DEMAND.md`. A blanket yes removes the confirmations coding
+  agents implement on purpose, for every agent on the machine at once,
+  including the ones you are not watching. Answering one agent you are looking
+  at is a different act from a policy that answers all of them.
+
 ## [0.5.0] - 2026-09-07
 
 The theme: sesh-bro became drivable by another coding agent, and gained a
