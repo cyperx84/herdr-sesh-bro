@@ -362,13 +362,13 @@ func TestLoad_MalformedKeyDegradesOnlyInPicker(t *testing.T) {
 		t.Fatalf("KeyClose = %q, want the raw malformed value preserved by Load", c.KeyClose)
 	}
 	args := picker.BuildArgs(picker.Options{SelfPath: "/bin/sesh-bro", Keys: c.Keys()})
-	wantCloseBind := "--bind=alt-x:execute-silent('/bin/sesh-bro' close {1} {2})+reload('/bin/sesh-bro' list )"
+	wantCloseBind := "--bind=alt-x:execute-silent('/bin/sesh-bro' close {1} {2})+reload('/bin/sesh-bro' list --header )"
 	found := false
 	for _, a := range args {
 		if a == wantCloseBind {
 			found = true
 		}
-		if a == "--bind=ctrl-q:evil(rm -rf ~):execute-silent('/bin/sesh-bro' close {1} {2})+reload('/bin/sesh-bro' list )" {
+		if a == "--bind=ctrl-q:evil(rm -rf ~):execute-silent('/bin/sesh-bro' close {1} {2})+reload('/bin/sesh-bro' list --header )" {
 			t.Fatalf("malformed SESH_BRO_KEY_CLOSE reached the argv uncorrected: %q", a)
 		}
 	}

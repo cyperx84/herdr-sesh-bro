@@ -69,6 +69,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 		return cmdList(ctx, env, args)
 	case "counts":
 		return cmdCounts(ctx, env, args)
+	case "rows":
+		return cmdRows(env, args)
 	case "record-event":
 		return cmdRecordEvent(ctx, env)
 	case "next":

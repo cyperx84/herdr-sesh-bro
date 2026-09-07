@@ -32,13 +32,13 @@ func TestBuildArgs_Default(t *testing.T) {
 		"--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all · alt-x close · ^/ create",
 		"--preview='/opt/sesh-bro/sesh-bro' preview {1} {2}",
 		"--preview-window=right,60%,border-left",
-		"--bind=alt-x:execute-silent('/opt/sesh-bro/sesh-bro' close {1} {2})+reload('/opt/sesh-bro/sesh-bro' list )",
-		"--bind=ctrl-w:reload('/opt/sesh-bro/sesh-bro' list --workspaces )",
-		"--bind=ctrl-e:reload('/opt/sesh-bro/sesh-bro' list --agents )",
-		"--bind=ctrl-b:reload('/opt/sesh-bro/sesh-bro' list --blocked )",
-		"--bind=ctrl-x:reload('/opt/sesh-bro/sesh-bro' list --dirs )",
-		"--bind=ctrl-o:reload('/opt/sesh-bro/sesh-bro' list )",
-		"--bind=ctrl-/:execute-silent('/opt/sesh-bro/sesh-bro' create)+reload('/opt/sesh-bro/sesh-bro' list )",
+		"--bind=alt-x:execute-silent('/opt/sesh-bro/sesh-bro' close {1} {2})+reload('/opt/sesh-bro/sesh-bro' list --header )",
+		"--bind=ctrl-w:reload('/opt/sesh-bro/sesh-bro' list --workspaces --header )",
+		"--bind=ctrl-e:reload('/opt/sesh-bro/sesh-bro' list --agents --header )",
+		"--bind=ctrl-b:reload('/opt/sesh-bro/sesh-bro' list --blocked --header )",
+		"--bind=ctrl-x:reload('/opt/sesh-bro/sesh-bro' list --dirs --header )",
+		"--bind=ctrl-o:reload('/opt/sesh-bro/sesh-bro' list --header )",
+		"--bind=ctrl-/:execute-silent('/opt/sesh-bro/sesh-bro' create)+reload('/opt/sesh-bro/sesh-bro' list --header )",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("BuildArgs() =\n%#v\nwant\n%#v", got, want)
@@ -51,13 +51,13 @@ func TestBuildArgs_Default(t *testing.T) {
 func TestBuildArgs_HideCurrent(t *testing.T) {
 	got := BuildArgs(Options{SelfPath: "/bin/sesh-bro", HideCurrent: true})
 	wantBinds := []string{
-		"--bind=ctrl-w:reload('/bin/sesh-bro' list --workspaces --hide-current)",
-		"--bind=ctrl-e:reload('/bin/sesh-bro' list --agents --hide-current)",
-		"--bind=ctrl-b:reload('/bin/sesh-bro' list --blocked --hide-current)",
-		"--bind=ctrl-x:reload('/bin/sesh-bro' list --dirs --hide-current)",
-		"--bind=ctrl-o:reload('/bin/sesh-bro' list --hide-current)",
-		"--bind=alt-x:execute-silent('/bin/sesh-bro' close {1} {2})+reload('/bin/sesh-bro' list --hide-current)",
-		"--bind=ctrl-/:execute-silent('/bin/sesh-bro' create)+reload('/bin/sesh-bro' list --hide-current)",
+		"--bind=ctrl-w:reload('/bin/sesh-bro' list --workspaces --header --hide-current)",
+		"--bind=ctrl-e:reload('/bin/sesh-bro' list --agents --header --hide-current)",
+		"--bind=ctrl-b:reload('/bin/sesh-bro' list --blocked --header --hide-current)",
+		"--bind=ctrl-x:reload('/bin/sesh-bro' list --dirs --header --hide-current)",
+		"--bind=ctrl-o:reload('/bin/sesh-bro' list --header --hide-current)",
+		"--bind=alt-x:execute-silent('/bin/sesh-bro' close {1} {2})+reload('/bin/sesh-bro' list --header --hide-current)",
+		"--bind=ctrl-/:execute-silent('/bin/sesh-bro' create)+reload('/bin/sesh-bro' list --header --hide-current)",
 	}
 	for _, want := range wantBinds {
 		found := false
@@ -238,8 +238,8 @@ func TestBuildArgs_KeyOverrides(t *testing.T) {
 		},
 	})
 	wantHeader := "--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all · ^d close · ^/ create"
-	wantCloseBind := "--bind=ctrl-d:execute-silent('/bin/sesh-bro' close {1} {2})+reload('/bin/sesh-bro' list )"
-	wantCreateBind := "--bind=ctrl-/:execute-silent('/bin/sesh-bro' create)+reload('/bin/sesh-bro' list )"
+	wantCloseBind := "--bind=ctrl-d:execute-silent('/bin/sesh-bro' close {1} {2})+reload('/bin/sesh-bro' list --header )"
+	wantCreateBind := "--bind=ctrl-/:execute-silent('/bin/sesh-bro' create)+reload('/bin/sesh-bro' list --header )"
 	for _, want := range []string{wantHeader, wantCloseBind, wantCreateBind} {
 		found := false
 		for _, g := range got {
@@ -477,5 +477,116 @@ func TestValidKeyMatchesFzfGrammarNotJustShape(t *testing.T) {
 		if validKey(k) {
 			t.Errorf("validKey(%q) = true, but fzf rejects it and will not start", k)
 		}
+	}
+}
+
+// BuildArgs emits --header-lines=1 whenever HeaderLines is set, which tells fzf
+// to treat the first line of EVERY stream it loads as chrome rather than a
+// candidate. So every reload has to produce that header line — and three of
+// them did not, which silently promoted the first real row into an
+// unselectable header (BEHAVIOUR.md §10.6). This states the invariant as a
+// test so the next bind added cannot quietly reintroduce it.
+func TestEveryReloadProducesAHeaderLine(t *testing.T) {
+	for _, opts := range []Options{
+		{SelfPath: "/bin/sesh-bro", HeaderLines: true},
+		{SelfPath: "/bin/sesh-bro", HeaderLines: true, HideCurrent: true},
+		{
+			SelfPath: "/bin/sesh-bro", HeaderLines: true, RowsDir: "/run/p1",
+			ListenSocket: "/run/p1/fzf.sock",
+			Fzf:          Features{Version: "0.74.3", Listen: true, TrackID: true, Footer: true},
+		},
+	} {
+		for _, arg := range BuildArgs(opts) {
+			if !strings.HasPrefix(arg, "--bind=") || !strings.Contains(arg, "reload(") {
+				continue
+			}
+			// A reload is safe in exactly three forms: it cats a pre-rendered
+			// view file, it goes through `rows` (which cats one), or it asks
+			// `list` for a header explicitly. Every view file begins with a
+			// header row because renderRows writes one into each.
+			viaTSV := strings.Contains(arg, ".tsv'")
+			viaRows := strings.Contains(arg, " rows --dir ")
+			viaHeaderFlag := strings.Contains(arg, "--header")
+			if !viaTSV && !viaRows && !viaHeaderFlag {
+				t.Errorf("reload bind produces no header line: %q (RowsDir=%q)", arg, opts.RowsDir)
+			}
+		}
+	}
+}
+
+// With a RowsDir every reload goes through `rows`, which reads the view marker.
+// The previous form re-executed `list` with no source flags, so pressing close
+// or create threw the user back to the all-sources view no matter which filter
+// was active — and left the marker untouched, so the next live push switched
+// the list back again.
+func TestCloseAndCreateReloadPreserveTheView(t *testing.T) {
+	got := BuildArgs(Options{
+		SelfPath: "/bin/sesh-bro", RowsDir: "/run/p1",
+		Fzf: Features{Version: "0.74.3", Listen: true},
+	})
+	var closeBind, createBind string
+	for _, a := range got {
+		switch {
+		case strings.HasPrefix(a, "--bind=alt-x:"):
+			closeBind = a
+		case strings.HasPrefix(a, "--bind=ctrl-/:"):
+			createBind = a
+		}
+	}
+	for name, bind := range map[string]string{"close": closeBind, "create": createBind} {
+		if bind == "" {
+			t.Fatalf("%s bind missing from %v", name, got)
+		}
+		if !strings.Contains(bind, "rows --dir '/run/p1'") {
+			t.Errorf("%s bind does not reload the current view: %q", name, bind)
+		}
+		if strings.Contains(bind, "reload('/bin/sesh-bro' list") {
+			t.Errorf("%s bind still re-execs list, discarding the active filter: %q", name, bind)
+		}
+	}
+}
+
+// The live argv had no golden coverage at all, which is why the header defect
+// survived. This pins every flag the live picker depends on.
+func TestBuildArgs_Live(t *testing.T) {
+	got := BuildArgs(Options{
+		SelfPath: "/bin/sesh-bro", PreviewEnabled: true, PreviewWidth: "60%",
+		HeaderLines: true, RowsDir: "/run/p1", ListenSocket: "/run/p1/fzf.sock",
+		Fzf: Features{Version: "0.74.3", Listen: true, TrackID: true, Footer: true},
+	})
+	joined := strings.Join(got, " ")
+	for _, want := range []string{
+		"--header-lines=1",
+		"--listen=/run/p1/fzf.sock",
+		"--track",
+		"--id-nth=2",
+		"--footer=enter connect",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("live argv missing %q: %v", want, got)
+		}
+	}
+	// With a footer the hints must NOT also occupy the header, which is where
+	// the live counts row goes.
+	for _, a := range got {
+		if strings.HasPrefix(a, "--header=") {
+			t.Errorf("hints stayed in the header while a footer was available: %q", a)
+		}
+	}
+}
+
+// An fzf too old for --listen must produce the pre-0.4.0 picker exactly: no
+// listen socket, no tracking, hints back in the header. This is the
+// degradation path the CHANGELOG promises, and it was broken.
+func TestBuildArgs_OldFzfDegradesCleanly(t *testing.T) {
+	got := BuildArgs(Options{SelfPath: "/bin/sesh-bro", HeaderLines: true, Fzf: Features{}})
+	joined := strings.Join(got, " ")
+	for _, unwanted := range []string{"--listen", "--track", "--id-nth", "--footer="} {
+		if strings.Contains(joined, unwanted) {
+			t.Errorf("old fzf argv contains %q: %v", unwanted, got)
+		}
+	}
+	if !strings.Contains(joined, "--header=enter connect") {
+		t.Errorf("hints did not fall back to the header: %v", got)
 	}
 }

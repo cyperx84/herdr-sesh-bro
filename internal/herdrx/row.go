@@ -255,12 +255,21 @@ func AgentRows(agents []Agent, current, hide string, statusFilter []herdr.AgentS
 
 // WithAges appends a time-in-state badge to the agent rows that have one.
 //
-// Only blocked and done rows get it, and that restraint is the point. Those
-// are the states where the number changes what you do: an agent blocked for
-// nine minutes is a different situation from one blocked for nine seconds, and
-// an idle session left for three hours may be burning a prompt cache (herdr
-// discussion #707). A badge on every working row would be noise competing with
-// the two rows that matter.
+// Blocked, done, and idle rows get it — see isBadgedStatus. Idle is the one
+// that was missing, and it was the whole point of the feature: herdr
+// discussion #707's complaint is that every idle row looks equally relevant
+// whether the agent stopped thirty seconds or three hours ago, and a
+// long-idle session is a prompt cache quietly expiring, i.e. real money.
+// attention.State's done -> idle clock preservation (sameClock) exists so
+// that an agent which finished twenty minutes ago still reads "20m" after
+// you glance at its tab — done and idle are the same underlying state, idle
+// just means you have now looked at it — and a badge that never renders on
+// idle rows makes that preserved clock invisible.
+//
+// Working rows still do not get one, and that restraint is the point: an
+// agent blocked for nine minutes is a different situation from one blocked
+// for nine seconds, while an age on a row that is actively progressing is
+// noise competing with the rows that actually want the human.
 //
 // ages is keyed by pane id, which is why Row carries one: the target is a
 // name when the agent has one, and names are not stable identifiers for this.
@@ -271,7 +280,7 @@ func WithAges(rows []Row, ages map[string]string) []Row {
 		return rows
 	}
 	for i := range rows {
-		if rows[i].Type != RowAgent || !isAttentionStatus(rows[i].Status) {
+		if rows[i].Type != RowAgent || !isBadgedStatus(rows[i].Status) {
 			continue
 		}
 		if age, ok := ages[rows[i].PaneID]; ok && age != "" {
@@ -435,10 +444,29 @@ func SplitAttention(rows []Row) (attention, rest []Row) {
 	return attention, rest
 }
 
-// isAttentionStatus reports whether a status means the agent wants the human.
+// isAttentionStatus reports whether a status means the agent wants the human
+// right now: blocked (it recognised an approval or question UI) or done
+// (idle with work you have NOT looked at yet). SplitAttention hoists on
+// this, and widening it is not a simplification but a behaviour change:
+// idle rows would get hoisted above the workspace block and wreck the
+// picker's ordering. This is deliberately NOT isBadgedStatus below — the
+// two differ on idle and only idle, and that difference is load-bearing.
 func isAttentionStatus(status string) bool {
 	return herdr.AgentStatus(status) == herdr.StatusBlocked ||
 		herdr.AgentStatus(status) == herdr.StatusDone
+}
+
+// isBadgedStatus reports whether a row deserves a time-in-state badge:
+// blocked, done, or idle — everything except actively working. This is
+// deliberately NOT isAttentionStatus above. Idle rows get badges (an agent
+// idle for three hours is a prompt cache quietly expiring, herdr discussion
+// #707) but must NOT be attention-hoisted (idle means you have already
+// looked, so there is nothing demanding you). Two predicates that look
+// near-identical and mean different things — do not merge them by accident.
+func isBadgedStatus(status string) bool {
+	return herdr.AgentStatus(status) == herdr.StatusBlocked ||
+		herdr.AgentStatus(status) == herdr.StatusDone ||
+		herdr.AgentStatus(status) == herdr.StatusIdle
 }
 
 // StatusOrder is the order every counts/summary rendering walks: the order

@@ -2,8 +2,11 @@ package herdrx
 
 import (
 	"testing"
+	"time"
 
 	herdr "github.com/cyperx84/herdr-api"
+
+	"github.com/cyperx84/herdr-sesh-bro/internal/attention"
 )
 
 func strp(s string) *string { return &s }
@@ -428,10 +431,13 @@ func TestSplitAttentionIgnoresNonAgentRows(t *testing.T) {
 	}
 }
 
-// Badges land only on the rows where the number changes what you do. An agent
-// blocked for nine minutes is a different situation from one blocked for nine
-// seconds; a working agent's age is noise competing with those.
-func TestWithAgesOnlyBadgesAttentionRows(t *testing.T) {
+// Badges land on blocked, done, and idle rows — the states where the number
+// changes what you do. An agent blocked for nine minutes is a different
+// situation from one blocked for nine seconds, and an agent idle for three
+// hours is a prompt cache quietly expiring (herdr discussion #707). A working
+// agent's age is the one omission that matters: it is noise competing with the
+// rows that actually want the human.
+func TestWithAgesBadgesIdleAndAttentionRows(t *testing.T) {
 	rows := []Row{
 		{Type: RowAgent, Target: "b", Status: "blocked", Detail: "claude · x", PaneID: "p1"},
 		{Type: RowAgent, Target: "d", Status: "done", Detail: "claude · y", PaneID: "p2"},
@@ -450,8 +456,8 @@ func TestWithAgesOnlyBadgesAttentionRows(t *testing.T) {
 	if got[2].Detail != "claude · z" {
 		t.Errorf("working row was badged: %q", got[2].Detail)
 	}
-	if got[3].Detail != "claude · q" {
-		t.Errorf("idle row was badged: %q", got[3].Detail)
+	if got[3].Detail != "claude · q · 2d" {
+		t.Errorf("idle detail = %q, want its badge — without it a long-idle prompt cache reads the same as a fresh one", got[3].Detail)
 	}
 	if got[4].Detail != "1p/1t" {
 		t.Errorf("workspace row was badged: %q", got[4].Detail)
@@ -468,5 +474,59 @@ func TestWithAgesLeavesUnknownPanesAlone(t *testing.T) {
 	}
 	if same := WithAges(rows, nil); same[0].Detail != "claude · x" {
 		t.Errorf("nil ages changed the detail: %q", same[0].Detail)
+	}
+}
+
+// The done -> idle clock preservation is the reason idle rows need badges at
+// all: done and idle are the same underlying state, idle just means you have
+// now looked at it, and attention.State's sameClock deliberately carries the
+// start time across that transition. An agent which finished at T and was
+// glanced at at T+5m must still read "5m" after the glance — if the badge
+// restarted on the glance it would erase exactly the number the user wanted
+// (herdr discussion #707). No import cycle: internal/attention imports nothing
+// from this package, so this test lives here next to the rendering it guards.
+func TestWithAgesDoneToIdlePreservesClock(t *testing.T) {
+	base := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	st := attention.New()
+	st.ApplyStatus("p1", "w1", "done", base)
+	st.ApplyStatus("p1", "w1", "idle", base.Add(5*time.Minute))
+
+	d, ok := attention.Since(st, "p1", "idle", base.Add(5*time.Minute))
+	if !ok {
+		t.Fatalf("Since(idle) reported no age — the badge would silently disappear on the glance")
+	}
+	if want := 5 * time.Minute; d != want {
+		t.Fatalf("age since idle = %v, want %v — sameClock must carry the done start time across done -> idle, not the transition time", d, want)
+	}
+
+	rows := []Row{{Type: RowAgent, Target: "a", Status: "idle", Detail: "claude · x", PaneID: "p1"}}
+	got := WithAges(rows, map[string]string{"p1": attention.FormatAge(d)})
+	if got[0].Detail != "claude · x · 5m" {
+		t.Fatalf("detail = %q, want %q — the rendered badge must reflect the original start time, not the done -> idle transition", got[0].Detail, "claude · x · 5m")
+	}
+}
+
+// SplitAttention hoists ONLY blocked and done — never idle, even now that
+// idle rows carry badges. The two predicates look near-identical and mean
+// different things: idle deserves a badge (it has been waiting) but not a
+// hoist (you have already looked, so nothing is demanding you). If someone
+// widens isAttentionStatus to match isBadgedStatus, every idle agent would
+// land above the workspace block and wreck the picker's ordering — this test
+// is the tripwire for that merge.
+func TestSplitAttentionHoistsOnlyBlockedAndDone(t *testing.T) {
+	rows := []Row{
+		{Type: RowAgent, Target: "a-blocked", Status: "blocked"},
+		{Type: RowAgent, Target: "a-done", Status: "done"},
+		{Type: RowAgent, Target: "a-idle", Status: "idle"},
+		{Type: RowAgent, Target: "a-working", Status: "working"},
+		{Type: RowAgent, Target: "a-unknown", Status: "unknown"},
+	}
+	hoisted, rest := SplitAttention(rows)
+	if len(hoisted) != 2 || hoisted[0].Target != "a-blocked" || hoisted[1].Target != "a-done" {
+		t.Fatalf("attention = %v, want exactly the blocked and done rows — idle was hoisted, which widens the hoist into a reordering of the whole picker", hoisted)
+	}
+	if len(rest) != 3 || rest[0].Target != "a-idle" || rest[1].Target != "a-working" || rest[2].Target != "a-unknown" {
+		t.Fatalf("rest = %v, want the idle, working, and unknown rows left in place", rest)
 	}
 }

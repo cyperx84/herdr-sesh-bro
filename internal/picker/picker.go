@@ -492,13 +492,13 @@ func BuildArgs(opts Options) []string {
 		// {1} {2} hand `close` the highlighted row's type and target, exactly
 		// as the --preview bind does. No --multi: highlighted-versus-selected
 		// cannot then diverge for an irreversible action.
-		fmt.Sprintf("--bind=%s:execute-silent(%s close {1} {2})+reload(%s list %s)", keys.Close, selfQ, selfQ, hide),
+		fmt.Sprintf("--bind=%s:execute-silent(%s close {1} {2})+%s", keys.Close, selfQ, reloadCurrent(opts, selfQ, hide)),
 		viewBind(opts, keys.Workspaces, "workspaces", selfQ, hide),
 		viewBind(opts, keys.Agents, "agents", selfQ, hide),
 		viewBind(opts, keys.Blocked, "blocked", selfQ, hide),
 		viewBind(opts, keys.Dirs, "dirs", selfQ, hide),
 		viewBind(opts, keys.All, "all", selfQ, hide),
-		fmt.Sprintf("--bind=%s:execute-silent(%s create)+reload(%s list %s)", keys.Create, selfQ, selfQ, hide),
+		fmt.Sprintf("--bind=%s:execute-silent(%s create)+%s", keys.Create, selfQ, reloadCurrent(opts, selfQ, hide)),
 	)
 	return args
 }
@@ -658,10 +658,13 @@ func Run(opts Options, connect Connector) error {
 // including its trailing space when --hide-current is absent).
 func viewBind(opts Options, key, view, selfQ, hide string) string {
 	if opts.RowsDir == "" {
+		// --header is not optional here: BuildArgs emits --header-lines=1, so
+		// a stream without a header row loses its first candidate to fzf's
+		// header (BEHAVIOUR.md §10.6). See reloadCurrent.
 		if view == "all" {
-			return fmt.Sprintf("--bind=%s:reload(%s list %s)", key, selfQ, hide)
+			return fmt.Sprintf("--bind=%s:reload(%s list --header %s)", key, selfQ, hide)
 		}
-		return fmt.Sprintf("--bind=%s:reload(%s list --%s %s)", key, selfQ, view, hide)
+		return fmt.Sprintf("--bind=%s:reload(%s list --%s --header %s)", key, selfQ, view, hide)
 	}
 	marker := quoteSingle(filepath.Join(opts.RowsDir, viewMarkerFile))
 	rows := quoteSingle(filepath.Join(opts.RowsDir, view+".tsv"))
@@ -670,3 +673,24 @@ func viewBind(opts Options, key, view, selfQ, hide string) string {
 
 // viewMarkerFile names the file inside RowsDir holding the current view.
 const viewMarkerFile = "view"
+
+// reloadCurrent is the reload action for a bind that must redisplay whatever
+// view is currently on screen — close and create, which mutate the session and
+// then need the list refreshed in place.
+//
+// With a RowsDir it defers to `rows`, which reads the view marker and cats the
+// matching pre-rendered file. That is the whole point: the previous form
+// re-executed `list` with no flags, which reset the display to the default
+// all-sources view no matter which filter the user had active, AND left the
+// marker untouched so the next live push switched it back again. Routing
+// through `rows` means one command decides what a reload emits, and it cannot
+// forget the header row --header-lines=1 requires.
+//
+// Without a RowsDir there are no files to read, so it falls back to the 0.3.0
+// re-exec — with --header, which the pre-0.4.1 form omitted.
+func reloadCurrent(opts Options, selfQ, hide string) string {
+	if opts.RowsDir == "" {
+		return fmt.Sprintf("reload(%s list --header %s)", selfQ, hide)
+	}
+	return fmt.Sprintf("reload(%s rows --dir %s)", selfQ, quoteSingle(opts.RowsDir))
+}
