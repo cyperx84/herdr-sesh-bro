@@ -95,6 +95,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   this code; `go test` now runs in CI in its place.
 
 ### Fixed
+- **The picker ate a row on several reload paths.** fzf is told
+  `--header-lines=1`, so every stream it loads must begin with a header row,
+  but three reload binds re-executed `list` without `--header` — close, create,
+  and the fallback used when fzf is too old for `--listen`. The first real
+  candidate silently became an unselectable header, and on an fzf below 0.66
+  that happened on *every* filter keypress, which falsified this release's own
+  claim that an older fzf degrades cleanly. Reloads now route through a hidden
+  `rows` subcommand that reads the view marker and cats the matching
+  pre-rendered file, so one place decides what a reload emits. That also fixes
+  a second defect in the same binds: close and create reloaded the default
+  all-sources view regardless of the active filter and left the view marker
+  untouched, so the next live push switched the list back.
+- **Idle rows never showed their age.** `done → idle` deliberately preserves an
+  agent's start time — those are one underlying state, and `idle` only means
+  you have now looked at it — but badges were gated on blocked and done, so
+  that preserved clock rendered nowhere. Idle rows are now badged; working rows
+  still are not. herdr discussion #707's complaint is precisely that an idle row
+  left three hours looks identical to one left thirty seconds.
 - The `SESH_BRO_KEY_CLOSE` default was `ctrl-q` — one of fzf's four default
   abort keys (`ctrl-c`, `ctrl-g`, `ctrl-q`, `esc`) — while the picker's own
   default was `alt-x`, deliberately chosen for exactly that reason

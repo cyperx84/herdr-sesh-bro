@@ -1702,6 +1702,18 @@ Three consequences worth stating:
 - **A render that changes nothing pushes nothing.** herdr emits `pane_updated`
   freely; reloading the list under the user's cursor for an invisible change is
   the jank this design exists to avoid.
+- **`--header-lines=1` binds every reload path.** Because fzf treats the first
+  line of whatever it loads as chrome, a reload that emits rows without a
+  header row silently promotes the first candidate into an unselectable
+  header. 0.4.0 shipped three binds that did exactly that (close, create, and
+  the no-`RowsDir` fallback), so on an fzf below 0.66 every filter keypress
+  lost a row — the degradation path this section promises was itself broken.
+  Reloads now route through the hidden `rows` subcommand, which reads the view
+  marker and cats the matching file, so one place decides what a reload emits;
+  the no-`RowsDir` fallbacks pass `--header`. Routing through `rows` also fixes
+  a second defect in the same binds: close and create reloaded the default
+  all-sources view regardless of the active filter and left the marker
+  untouched, so the next push switched the list back under the user.
 - **The counts line is a ROW, not fzf's `--header`.** `--header` is fixed for
   the process's lifetime, while a header line is part of the input and so is
   replaced by every reload — the counts stay live on the mechanism that was
@@ -1789,6 +1801,29 @@ recently focused workspace that is not the current one and still exists; with
 no history yet it falls back to the old rule rather than refusing. S2's silent
 no-op (running outside a herdr pane, `current == ""`) is unchanged in the
 fallback path.
+
+### 10.9 Idle rows are badged too
+
+*Supersedes §10.8's "blocked and done".*
+
+Time-in-state badges render on blocked, done **and idle** rows; never on
+working ones.
+
+Idle was the omission that mattered. §10.8 explains that `done → idle` keeps
+its start time, because those are one underlying state and `idle` only means
+you have now looked — but with badges gated on blocked and done, that
+preserved clock was never displayed anywhere. herdr discussion #707's actual
+complaint is that every idle row looks equally relevant whether the agent
+stopped thirty seconds or three hours ago, and a long-idle agent session is a
+prompt cache quietly expiring.
+
+Working rows stay unbadged: an age on a row that is actively progressing is
+noise competing with the rows that want the human.
+
+Two predicates now exist and are deliberately not merged. `isAttentionStatus`
+(blocked, done) drives the attention hoist of §10.2; widening it would lift
+every idle agent above the workspace block and wreck the ordering.
+`isBadgedStatus` adds idle and nothing else.
 
 ## Appendix A — exit code reference
 

@@ -58,7 +58,7 @@ exists as a whole dedicated plugin for it, and `andrewchng/herdr-sessionizer` ha
 backlog PRD (#33). But that is builder-revealed demand, not upvote-counted — and it is
 "small", not trivial. Right after the top three.
 
-## The highest-demand thing we are NOT building
+## The highest-demand thing we are NOT building — BUILT IN 0.4.0, see the note below
 
 **Show how long each agent has been in its current state.** herdr discussion #707, 6
 upvotes, 3 corroborating comments — one calling it "such a killer feature", another tying
@@ -79,6 +79,23 @@ creation, which *is* derivable, and is a different and much cheaper thing.
 Same root cause, same rejection: true N-deep recency/frecency sort beyond our existing
 single-slot `last` (#1407, #1886; `beyondlex/herdr-recent-navigator` builds it by running
 a persistent event listener).
+
+> **NOTE (0.4.0): the rejection above was wrong, and both items shipped.** The technical
+> fact still holds — herdr exposes no status timestamp, and 0.8.2's schema confirms it
+> (#3619 asks for one; #2034 asked and was closed). What was wrong is the inference that
+> keeping our own clock means "a persistent daemon with its own state store".
+>
+> herdr's `[[events]]` manifest hook runs a plugin command *per event*, and — verified
+> against 0.8.2 with a throwaway plugin — those hooks fire for every pane with **no
+> per-pane registration**, unlike `events.subscribe`, whose status subscription demands a
+> `pane_id`. So the cost is one short-lived process per state change, on the order of a
+> handful per minute, not a resident listener. `record-event` writes
+> `$HERDR_PLUGIN_STATE_DIR/state.json` under a lock and never exits non-zero.
+>
+> That is the whole footprint, and it is well below the ladder jump this section refused.
+> Time-in-state badges and a real MRU `last` both ship on it (docs/BEHAVIOUR.md §10.8).
+> The lesson worth keeping: "we would have to keep our own clock" was true, and
+> "therefore we need a daemon" did not follow — the host already had a cheaper hook.
 
 ## Flagged, below the demand bar
 

@@ -34,8 +34,10 @@ authors = ["cyperx"]
 platforms = ["linux", "macos"]
 command = ["sh", "scripts/build.sh"]
 
-# Startup: validate dependencies and clear the stale pane cache once per
-# server start. A startup failure is logged but does not stop the server.
+# Startup: validate dependencies once per server start. (It used to also clear
+# a stale pane cache; that cache was removed in 0.4.0 when session.snapshot
+# replaced the reads it existed to soften.) A startup failure is logged but
+# does not stop the server.
 [[startup]]
 command = ["./bin/sesh-bro", "startup"]
 

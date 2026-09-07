@@ -162,7 +162,7 @@ not be the one that silently closes a workspace.)
 
 ## How long has it been waiting
 
-Blocked and done rows carry their age:
+Blocked, done and idle rows carry their age:
 
 ```
 ● claude  claude · Progress check · 9m
@@ -180,8 +180,10 @@ glancing at a finished agent should not erase how long it waited; and if the
 recorded status disagrees with the live one, the badge is omitted rather than
 shown from a stale start time.
 
-Badges appear only on blocked and done rows, where the number changes what you
-do, and never in `--json`.
+Badges appear on blocked, done and idle rows — never on working ones, where an
+age is noise competing with the rows that want you — and never in `--json`.
+Idle matters as much as blocked here: a session left three hours is a prompt
+cache quietly expiring.
 
 The same recording makes `sesh-bro last` a real most-recently-used jump. It
 used to focus the highest-numbered *other* workspace, which is "previous" only

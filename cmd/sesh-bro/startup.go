@@ -1,7 +1,10 @@
-// cmdStartup reproduces cmd_startup (sesh-bro:121-125, BEHAVIOUR.md §2.1):
-// the manifest's [[startup]] hook — validate deps, clear the stale pane
-// cache, report ok. Any arguments are silently ignored (bash never reads
+// cmdStartup is the manifest's [[startup]] hook (BEHAVIOUR.md §2.1): validate
+// deps, report ok. Any arguments are silently ignored (the bash never read
 // $1/$2 here either).
+//
+// It used to also clear a stale pane cache. That cache was removed in 0.4.0
+// when session.snapshot replaced the four reads it existed to soften
+// (BEHAVIOUR.md §10.1).
 package main
 
 import (
