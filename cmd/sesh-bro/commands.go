@@ -58,6 +58,10 @@ var commands = []commandSpec{
 		Headless: true, Run: func(ctx context.Context, env *appEnv, args []string) int {
 			return cmdNext(ctx, env, args, -1)
 		}},
+	{Name: "wait", Args: "--target A [--until S] [--timeout D]", Summary: "block until an agent settles; exit 3 on timeout",
+		Headless: true, Run: cmdWait},
+	{Name: "read", Args: "TARGET [--source S]", Summary: "print what an agent's pane shows (--source recent-unwrapped for scrollback)",
+		Headless: true, Run: cmdRead},
 	{Name: "connect", Args: "TYPE TARGET", Summary: "focus a workspace/agent, or create a workspace for a dir",
 		Headless: true, Run: cmdConnect},
 	{Name: "close", Args: "TYPE TARGET", Summary: "close a workspace (workspace rows only; picker alt-x)",
