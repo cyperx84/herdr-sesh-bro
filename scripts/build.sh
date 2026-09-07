@@ -33,8 +33,8 @@ set -eu
 
 # cd to the plugin root regardless of where herdr invokes this from, so the
 # relative "bin/sesh-bro" output path below is unambiguous.
-script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-root_dir=$(CDPATH= cd -- "$script_dir/.." && pwd)
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+root_dir=$(CDPATH='' cd -- "$script_dir/.." && pwd)
 cd "$root_dir"
 
 OUT="bin/sesh-bro"
