@@ -14,6 +14,15 @@
 #      trusts is pinned in expected_sha256() below, in the source tree, not
 #      fetched alongside the binary.
 #
+# Those pins have to be written before the release they describe exists —
+# there is no other order available — so they are treated as an assertion CI
+# checks rather than a value anyone has to trust. .github/workflows/release.yml
+# rebuilds all four targets on the tag and refuses to publish the release if
+# any pin below disagrees with what it just built. A stale or mistyped hash
+# therefore fails loudly, in front of whoever is cutting the release, instead
+# of shipping a fallback that silently refuses to install on every machine
+# without a Go toolchain. docs/RELEASING.md is the ritual that keeps it true.
+#
 # Pattern copied verbatim from herdr-loop's scripts/build.sh (itself adopted
 # from cloudmanic/herdr-plus per herdr-loop's PLAN.md §7), with OUT/PKG/REPO/
 # VERSION swapped for this plugin. herdr-plugin.toml gives platforms=["linux",
@@ -41,10 +50,14 @@ echo "sesh-bro: no Go toolchain on PATH — falling back to a prebuilt release b
 # --- release pin -----------------------------------------------------------
 #
 # Bump VERSION and the platform table together, in the same commit as the
-# tagged release they describe. A binary this script cannot find an entry
-# for is refused, not silently skipped — see the fallback branch at the
-# bottom of platform_target().
-VERSION="v0.3.0"
+# tagged release they describe — that commit is the one the tag points at,
+# so the two can never be a release apart. A binary this script cannot find
+# an entry for is refused, not silently skipped — see the fallback branch at
+# the bottom of platform_target(). cmd/sesh-bro/buildscript_test.go fails the
+# ordinary test suite if VERSION here and the version in herdr-plugin.toml
+# drift apart, which is how this line came to say v0.3.0 for a tag that was
+# never cut.
+VERSION="v0.4.0"
 REPO="cyperx84/herdr-sesh-bro"
 
 os=$(uname -s)
@@ -72,10 +85,19 @@ platform_target() {
 target=$(platform_target)
 
 # SHA256 of the release asset for each target, pinned here rather than
-# fetched from the release alongside the binary (see header comment). No
-# tagged release exists yet, so every entry is a placeholder that
-# deliberately fails the check below until this script is updated for a real
-# v0.3.0 tag.
+# fetched from the release alongside the binary (see header comment).
+#
+# These have to be committed BEFORE the tag that produces the artifacts they
+# describe, which looks like a chicken-and-egg and is resolved by making the
+# pin a verified assertion rather than a hope: the release workflow rebuilds
+# each target, recomputes its SHA256, and FAILS THE RELEASE if any value here
+# disagrees. So a wrong pin breaks the release loudly instead of shipping a
+# fallback that silently refuses to install. docs/RELEASING.md has the ritual.
+#
+# UNRELEASED is the deliberate pre-release state: it fails the check below,
+# which is correct — until a tag exists there is no asset to download, and a
+# machine with no Go toolchain should be told to install one rather than sent
+# to a 404.
 expected_sha256() {
     case "$1" in
         darwin-arm64) echo "UNRELEASED" ;;

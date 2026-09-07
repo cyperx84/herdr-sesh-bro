@@ -9,7 +9,103 @@ permissions:
   contents: write
 
 jobs:
+  # Cross-compile every target from one ubuntu runner. CGO_ENABLED=0 means
+  # the host OS is irrelevant to the output, and building all four in the
+  # same job family keeps the toolchain, the tar implementation and the gzip
+  # implementation identical across targets — which matters, because the
+  # SHA256 of each tarball is pinned in scripts/build.sh and asserted below.
+  #
+  # This job deliberately has no `needs:`. A dry run (see docs/RELEASING.md)
+  # pushes a throwaway tag whose name cannot match the manifest, so the
+  # release job below fails at its version gate — but the hashes a human
+  # needs are produced *here*, and this job still succeeds and still writes
+  # them to the run summary.
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [darwin, linux]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          # -buildvcs=false is load-bearing, not tidiness. Go stamps the git
+          # revision, commit time and dirty flag into every main package's
+          # build info by default, and neither -trimpath nor -ldflags='-s -w'
+          # removes them (they live in .go.buildinfo, which survives
+          # stripping — `go version -m` will still read them back). With the
+          # stamp on, the binary's hash depends on the commit it was built
+          # from, so the checksum pinned in scripts/build.sh could never
+          # match: pasting a hash creates a new commit, which changes the
+          # hash. Every release would fail the verification step below,
+          # forever. Turning the stamp off is what makes the pin expressible
+          # at all. The tag is the provenance; the binary does not need to
+          # carry a second, self-invalidating copy of it.
+          go build -trimpath -buildvcs=false -ldflags='-s -w' -o sesh-bro ./cmd/sesh-bro
+
+      - name: Package
+        id: package
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          asset="sesh-bro-${TAG}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
+
+          # Normalise everything tar and gzip would otherwise record about
+          # *when* and *by whom* the archive was made. Without this the
+          # tarball hash changes on every run even for a byte-identical
+          # binary — mtime, the runner's uid/gid, the pax/gnu extended
+          # headers and the gzip header's embedded timestamp all vary — and
+          # a pin taken from a dry run would never match the real release.
+          #   --format=ustar   no pax extended headers (they carry
+          #                    sub-second mtimes)
+          #   --mtime='@0'     fixed timestamp
+          #   --owner/--group  fixed ownership, recorded numerically
+          #   gzip -n          no filename/timestamp in the gzip header
+          tar --format=ustar --owner=0 --group=0 --numeric-owner \
+              --mtime='@0' -cf - sesh-bro | gzip -9n > "$asset"
+
+          bin_sha="$(sha256sum sesh-bro | cut -d' ' -f1)"
+          tgz_sha="$(sha256sum "$asset" | cut -d' ' -f1)"
+          target="${{ matrix.goos }}-${{ matrix.goarch }}"
+
+          echo "binary  sha256: $bin_sha"
+          echo "tarball sha256: $tgz_sha"
+
+          # Write the pin to the run summary as a copy-pasteable line. On a
+          # dry run the release job never gets far enough to print its
+          # verification table, so this is the only place the four hashes
+          # show up together — one line per matrix leg, all on the same
+          # summary page. Pasting these into expected_sha256() is the whole
+          # point of the dry run.
+          {
+            echo "\`${target}) echo \"${tgz_sha}\" ;;\`"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          # Artifact names must be unique across the matrix; the release job
+          # merges them back into one directory.
+          name: sesh-bro-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ steps.package.outputs.asset }}
+          if-no-files-found: error
+          retention-days: 7
+
   release:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +121,124 @@ jobs:
             echo "ERROR: herdr-plugin.toml version ($manifest_version) != tag version (${{ steps.version.outputs.version }})" >&2
             exit 1
           fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum ./*.tar.gz | sed 's| \./| |' > checksums.txt
+          cat checksums.txt
+
+      # The chicken-and-egg this repo could not previously resolve:
+      # scripts/build.sh must carry the SHA256 of each release asset so a
+      # toolchain-less install can verify what it downloads, but the assets
+      # only exist once the tag is pushed — so the pin is always written
+      # before the thing it describes exists. It cannot be derived; it can
+      # only be *asserted*. This step is that assertion. A pin that is stale,
+      # mistyped, half-pasted or still UNRELEASED fails the release loudly,
+      # here, where a human is watching — instead of shipping a fallback path
+      # that silently refuses to install for every user without Go, which is
+      # exactly the failure mode the UNRELEASED placeholders were papering
+      # over.
+      - name: Verify pinned checksums in scripts/build.sh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # Pull the pins out of the expected_sha256() case statement rather
+          # than grepping the whole file: platform_target() a few lines above
+          # is also a case statement full of `x) echo "..."` arms, and a
+          # looser pattern would happily match "darwin-arm64" as a *value*
+          # there. Bound the scan to the function body, then read each arm.
+          pins="$(awk '
+            /^expected_sha256\(\) \{$/ { in_fn = 1; next }
+            in_fn && /^\}$/            { exit }
+            in_fn                      { print }
+          ' scripts/build.sh | sed -n 's/^[[:space:]]*\([a-z0-9-]*\))[[:space:]]*echo[[:space:]]*"\([^"]*\)".*/\1 \2/p')"
+
+          count="$(printf '%s\n' "$pins" | grep -c . || true)"
+          if [[ "$count" -ne 4 ]]; then
+            echo "ERROR: expected 4 pins in scripts/build.sh expected_sha256(), parsed $count" >&2
+            echo "The case statement's shape changed and this extraction no longer understands it." >&2
+            printf '%s\n' "$pins" >&2
+            exit 1
+          fi
+
+          # The version the fallback downloads must be the tag being
+          # released, or every pin below describes some other release's
+          # assets. (cmd/sesh-bro/buildscript_test.go catches the commoner
+          # drift — pin vs manifest — on every CI run, long before here.)
+          pinned_version="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' scripts/build.sh | head -1)"
+          if [[ "$pinned_version" != "$TAG" ]]; then
+            echo "ERROR: scripts/build.sh pins VERSION=\"$pinned_version\" but the tag is \"$TAG\"" >&2
+            echo "Bump VERSION in scripts/build.sh to \"$TAG\" — see docs/RELEASING.md." >&2
+            exit 1
+          fi
+
+          unreleased=0
+          wrong=0
+          block=""
+          for target in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
+            want="$(printf '%s\n' "$pins" | awk -v t="$target" '$1 == t { print $2 }')"
+            if [[ -z "$want" ]]; then
+              echo "ERROR: scripts/build.sh has no expected_sha256() arm for $target" >&2
+              exit 1
+            fi
+
+            asset="sesh-bro-${TAG}-${target}.tar.gz"
+            if [[ ! -f "dist/$asset" ]]; then
+              echo "ERROR: the build job produced no $asset" >&2
+              exit 1
+            fi
+            got="$(sha256sum "dist/$asset" | cut -d' ' -f1)"
+            block+="        ${target}) echo \"${got}\" ;;"$'\n'
+
+            if [[ "$want" == "$got" ]]; then
+              echo "ok       $target  $got"
+            elif [[ "$want" == "UNRELEASED" ]]; then
+              echo "PENDING  $target  pin is still the UNRELEASED placeholder"
+              unreleased=$((unreleased + 1))
+            else
+              echo "MISMATCH $target"
+              echo "           pinned $want"
+              echo "           built  $got"
+              wrong=$((wrong + 1))
+            fi
+          done
+
+          if [[ $unreleased -eq 0 && $wrong -eq 0 ]]; then
+            echo "All four pins in scripts/build.sh match the artifacts being released."
+            exit 0
+          fi
+
+          # Two different situations, two different things to do about them
+          # at 2am, so say which one this is rather than one generic error.
+          if [[ $wrong -gt 0 ]]; then
+            echo "::error::$wrong pinned checksum(s) in scripts/build.sh do not match the built artifacts. Either the pins are stale (taken from a different commit or a different dry run) or the build is not reproducible. Nothing was released."
+          fi
+          if [[ $unreleased -gt 0 ]]; then
+            echo "::notice::$unreleased pin(s) are still UNRELEASED. This is the expected outcome of a first, deliberate dry run: no release was created."
+          fi
+
+          {
+            echo '## Pinned checksums do not match'
+            echo
+            echo 'No release was created. Replace the body of `expected_sha256()`'
+            echo 'in `scripts/build.sh` with exactly this, commit it, then move the tag:'
+            echo
+            echo '```sh'
+            printf '%s' "$block"
+            echo '```'
+            echo
+            echo 'Change *only* those four lines between now and the retag — any'
+            echo 'edit under `cmd/` or `internal/` produces a different binary and'
+            echo 'these hashes go stale again.'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          exit 1
 
       - name: Build changelog excerpt
         id: changelog
@@ -44,3 +258,15 @@ jobs:
           body_path: /tmp/release-notes.md
           draft: false
           prerelease: false
+          # scripts/build.sh's fallback fetches
+          # sesh-bro-${VERSION}-${target}.tar.gz from this release by exact
+          # name; checksums.txt is for humans, since the script trusts only
+          # the pin in its own source, never a checksum shipped alongside
+          # the binary it describes.
+          files: |
+            dist/sesh-bro-${{ github.ref_name }}-darwin-amd64.tar.gz
+            dist/sesh-bro-${{ github.ref_name }}-darwin-arm64.tar.gz
+            dist/sesh-bro-${{ github.ref_name }}-linux-amd64.tar.gz
+            dist/sesh-bro-${{ github.ref_name }}-linux-arm64.tar.gz
+            dist/checksums.txt
+          fail_on_unmatched_files: true
