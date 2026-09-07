@@ -26,6 +26,7 @@ import (
 // listFlags is cmd_list's parsed argument state (sesh-bro:130).
 type listFlags struct {
 	wantWS, wantAgent, wantDir bool
+	wantWorktree               bool
 	statuses                   []herdr.AgentStatus
 	hideCurrent                bool
 	asJSON                     bool
@@ -53,20 +54,22 @@ func parseListFlags(args []string) (listFlags, error) {
 			f.wantWS, sourceFlag = true, true
 		case "--agents":
 			f.wantAgent, sourceFlag = true, true
+		case "--worktrees":
+			f.wantWorktree, sourceFlag = true, true
 		case "--dirs":
 			f.wantDir, sourceFlag = true, true
 		case "--blocked":
 			f.statuses = append(f.statuses, herdr.StatusBlocked)
-			f.wantAgent, f.wantWS, f.wantDir, sourceFlag = true, false, false, true
+			f.wantAgent, f.wantWS, f.wantDir, f.wantWorktree, sourceFlag = true, false, false, false, true
 		case "--working":
 			f.statuses = append(f.statuses, herdr.StatusWorking)
-			f.wantAgent, f.wantWS, f.wantDir, sourceFlag = true, false, false, true
+			f.wantAgent, f.wantWS, f.wantDir, f.wantWorktree, sourceFlag = true, false, false, false, true
 		case "--done":
 			f.statuses = append(f.statuses, herdr.StatusDone)
-			f.wantAgent, f.wantWS, f.wantDir, sourceFlag = true, false, false, true
+			f.wantAgent, f.wantWS, f.wantDir, f.wantWorktree, sourceFlag = true, false, false, false, true
 		case "--idle":
 			f.statuses = append(f.statuses, herdr.StatusIdle)
-			f.wantAgent, f.wantWS, f.wantDir, sourceFlag = true, false, false, true
+			f.wantAgent, f.wantWS, f.wantDir, f.wantWorktree, sourceFlag = true, false, false, false, true
 		case "--hide-current":
 			f.hideCurrent = true
 		case "--json":
@@ -78,7 +81,7 @@ func parseListFlags(args []string) (listFlags, error) {
 		}
 	}
 	if !sourceFlag {
-		f.wantWS, f.wantAgent, f.wantDir = true, true, true
+		f.wantWS, f.wantAgent, f.wantDir, f.wantWorktree = true, true, true, true
 	}
 	return f, nil
 }
@@ -121,12 +124,14 @@ func cmdList(ctx context.Context, env *appEnv, args []string) int {
 // binds used to. `list` itself calls the two back to back and is unchanged in
 // observable behaviour.
 type listSources struct {
-	snap    herdrx.Snapshot
-	current string // current workspace id, "" when unknown
-	hide    string // workspace id to omit, "" to omit nothing
-	zoxide  []string
-	git     *external.GitCache
-	gitAt   time.Time
+	snap      herdrx.Snapshot
+	current   string // current workspace id, "" when unknown
+	hide      string // workspace id to omit, "" to omit nothing
+	zoxide    []string
+	worktrees []herdr.Worktree
+	wtAt      time.Time
+	git       *external.GitCache
+	gitAt     time.Time
 	// state is what the [[events]] hook recorded: when each agent entered
 	// its status, for the time-in-state badges. Empty when nothing has been
 	// recorded yet, which costs badges and nothing else.
@@ -238,6 +243,25 @@ func refreshSources(ctx context.Context, env *appEnv, cfg config.Config, flags l
 	// Directory block inputs: sesh-bro:187-211, gated on want_dir AND
 	// $CFG_DIR_SOURCES AND zoxide on PATH. CFG_DIR_SOURCES is evaluated
 	// (and can crash, S1) ONLY when want_dir is true.
+	// Worktrees: one worktree.list per distinct repo root. The roots come from
+	// the snapshot for worktree-backed workspaces and are otherwise unknown, so
+	// this asks herdr per root rather than guessing — and caches the answer,
+	// because a pane changing state cannot create or remove a worktree.
+	if flags.wantWorktree {
+		wtSources, err := cfg.WorktreeSources()
+		if err != nil {
+			return listSources{}, err
+		}
+		switch {
+		case !wtSources:
+			// Off; skip the RPCs entirely.
+		case prev != nil && prev.worktrees != nil && time.Since(prev.wtAt) < worktreeCacheTTL:
+			src.worktrees, src.wtAt = prev.worktrees, prev.wtAt
+		default:
+			src.worktrees, src.wtAt = fetchWorktrees(ctx, client, openErr, snap), time.Now()
+		}
+	}
+
 	if flags.wantDir {
 		dirSources, err := cfg.DirSources()
 		if err != nil {
@@ -265,6 +289,74 @@ func refreshSources(ctx context.Context, env *appEnv, cfg config.Config, flags l
 // long enough that a burst of agent events costs no subprocesses.
 const gitCacheTTL = 5 * time.Second
 
+// worktreeCacheTTL bounds how stale the worktree list may get. Longer than the
+// git cache because creating or removing a worktree is a deliberate act a user
+// performs rarely, while a branch changes constantly.
+const worktreeCacheTTL = 30 * time.Second
+
+// fetchWorktrees asks herdr for the worktrees of every repo the session has a
+// workspace in.
+//
+// worktree.list is repo-scoped, so this is one call per DISTINCT repo root,
+// deduped — a session with six workspaces across two repos costs two calls,
+// not six. Roots come from Workspace.Worktree.RepoRoot where herdr already
+// knows one; for a plain workspace herdr resolves the repo from the cwd, so
+// the pane cwd is passed instead and duplicate answers are merged by path.
+//
+// Failures are swallowed per repo: a workspace whose cwd is not a repo at all
+// is the common case, not an error, and one unreadable repo must not cost the
+// user every other repo's worktrees.
+func fetchWorktrees(ctx context.Context, client *herdrx.Client, openErr error, snap herdrx.Snapshot) []herdr.Worktree {
+	if openErr != nil {
+		return nil
+	}
+
+	cwds := make([]string, 0, len(snap.Workspaces))
+	seenCWD := map[string]bool{}
+	for _, w := range snap.Workspaces {
+		cwd := ""
+		if w.Worktree != nil {
+			cwd = w.Worktree.RepoRoot
+		}
+		if cwd == "" {
+			cwd = workspaceCWD(snap, w.ID)
+		}
+		if cwd == "" || seenCWD[cwd] {
+			continue
+		}
+		seenCWD[cwd] = true
+		cwds = append(cwds, cwd)
+	}
+
+	var out []herdr.Worktree
+	seenPath := map[string]bool{}
+	for _, cwd := range cwds {
+		wts, err := client.ListWorktrees(ctx, cwd)
+		if err != nil {
+			continue
+		}
+		for _, wt := range wts {
+			if seenPath[wt.Path] {
+				continue
+			}
+			seenPath[wt.Path] = true
+			out = append(out, wt)
+		}
+	}
+	return out
+}
+
+// workspaceCWD is the cwd of a workspace's first pane, which is what herdr
+// resolves a repo against when a workspace carries no worktree of its own.
+func workspaceCWD(snap herdrx.Snapshot, workspaceID string) string {
+	for _, p := range snap.Panes {
+		if p.WorkspaceID == workspaceID && p.CWD != "" {
+			return p.CWD
+		}
+	}
+	return ""
+}
+
 // renderRows turns already-fetched sources into `list`'s output for one view.
 // It performs no I/O beyond writing to w and the git subprocesses the cache
 // has not already answered, so the live picker can call it once per view.
@@ -289,6 +381,11 @@ func renderRows(ctx context.Context, cfg config.Config, flags listFlags, src lis
 		dirRows = herdrx.DirRows(src.zoxide, known, cfg.Blacklist)
 	}
 
+	var wtRows []herdrx.Row
+	if flags.wantWorktree && len(src.worktrees) > 0 {
+		wtRows = herdrx.WorktreeRows(src.worktrees, cfg.Blacklist)
+	}
+
 	// Attention hoist (BEHAVIOUR.md §10, superseding the ordering of
 	// §2.2.4-2.2.7). Blocked and done agents leave the agents block and go
 	// above every other block, from whichever workspace they belong to, so
@@ -305,9 +402,9 @@ func renderRows(ctx context.Context, cfg config.Config, flags listFlags, src lis
 	if attentionFirst && flags.wantAgent {
 		attention, rest := herdrx.SplitAttention(agRows)
 		raw = append(raw, attention...)
-		raw = append(raw, assembleBlocks(cfg.SortOrder, wsRows, rest, dirRows)...)
+		raw = append(raw, assembleBlocks(cfg.SortOrder, wsRows, rest, dirRows, wtRows)...)
 	} else {
-		raw = assembleBlocks(cfg.SortOrder, wsRows, agRows, dirRows)
+		raw = assembleBlocks(cfg.SortOrder, wsRows, agRows, dirRows, wtRows)
 	}
 
 	// Git enrichment: sesh-bro:235-265, BEHAVIOUR.md §2.2.8 — JSON output
@@ -381,8 +478,13 @@ func listOutput(ctx context.Context, env *appEnv, args []string, w io.Writer) er
 // empty row slice is a silent no-op, which is exactly bash's own
 // `[[ -n $ws_block ]] && raw+=...` guard — no separate emptiness check is
 // needed here.
-func assembleBlocks(sortOrder string, ws, ag, dir []herdrx.Row) []herdrx.Row {
-	order := []string{"workspaces", "agents", "dirs"}
+func assembleBlocks(sortOrder string, ws, ag, dir, wt []herdrx.Row) []herdrx.Row {
+	// Worktrees sit last by default: they are the least likely thing you
+	// opened the picker for, and unlike the other three they are candidates
+	// that do not exist yet as sessions. A user who disagrees reorders them
+	// with SESH_BRO_SORT_ORDER like any other block (S5: a block absent from a
+	// non-empty sort_order is dropped entirely, which is how you hide them).
+	order := []string{"workspaces", "agents", "dirs", "worktrees"}
 	if sortOrder != "" {
 		order = bashSplit(sortOrder, ',')
 	}
@@ -395,6 +497,8 @@ func assembleBlocks(sortOrder string, ws, ag, dir []herdrx.Row) []herdrx.Row {
 			raw = append(raw, ag...)
 		case "dirs":
 			raw = append(raw, dir...)
+		case "worktrees":
+			raw = append(raw, wt...)
 		}
 	}
 	return raw

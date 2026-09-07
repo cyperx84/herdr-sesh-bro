@@ -47,6 +47,12 @@ func StatusColor(status string) string {
 		return "\x1b[34m"
 	case "dir":
 		return "\x1b[36m"
+	case "worktree":
+		// Magenta, distinct from dir's cyan: the two look alike in a row
+		// (both are just paths) and the difference — one is a checkout you
+		// have not opened, the other is any directory you have visited — is
+		// exactly what the colour has to carry.
+		return "\x1b[35m"
 	default:
 		return "\x1b[90m"
 	}
@@ -61,6 +67,7 @@ type Icons struct {
 	Workspace string
 	Agent     string
 	Dir       string
+	Worktree  string
 }
 
 // DefaultIcons returns bash's built-in glyphs (sesh-bro lines 43-45), used
@@ -78,6 +85,11 @@ const (
 	KindWorkspace Kind = "workspace"
 	KindAgent     Kind = "agent"
 	KindDir       Kind = "dir"
+	// KindWorktree is a git worktree on disk with no workspace open on it
+	// (BEHAVIOUR.md §10.10). It renders like a directory because that is what
+	// picking one does — open a workspace there — and it carries the same "-"
+	// status placeholder, having no agent of its own.
+	KindWorktree Kind = "worktree"
 )
 
 // FormatRow renders one `list` row exactly as bash's row-render loop does
@@ -111,6 +123,8 @@ func FormatRow(kind Kind, target, status, label, detail string, icons Icons) (st
 		color, glyph = StatusColor(status), icons.Agent
 	case KindDir:
 		color, glyph = StatusColor("dir"), icons.Dir
+	case KindWorktree:
+		color, glyph = StatusColor("worktree"), icons.Worktree
 	default:
 		// Unreachable from bash's own list builder: only these three kinds
 		// are ever produced (BEHAVIOUR.md §4.1). Bash's equivalent `case`

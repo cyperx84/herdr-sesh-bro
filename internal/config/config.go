@@ -100,6 +100,7 @@ type Config struct {
 	IconWorkspace string
 	IconAgent     string
 	IconDir       string
+	IconWorktree  string
 
 	// KeyWorkspaces, KeyAgents, KeyBlocked, KeyDirs, KeyAll, KeyCreate,
 	// KeyClose are SESH_BRO_KEY_WORKSPACES/AGENTS/BLOCKED/DIRS/ALL/CREATE/
@@ -120,6 +121,7 @@ type Config struct {
 	KeyAgents     string
 	KeyBlocked    string
 	KeyDirs       string
+	KeyWorktrees  string
 	KeyAll        string
 	KeyCreate     string
 	KeyClose      string
@@ -146,6 +148,11 @@ type Config struct {
 	previewEnabledRaw string
 	hideCurrentRaw    string
 	dirSourcesRaw     string
+
+	// worktreeSourcesRaw holds SESH_BRO_WORKTREE_SOURCES, gating the worktrees
+	// block. Lazily parsed like its three siblings so a malformed value can
+	// only break a command that actually asks for worktrees.
+	worktreeSourcesRaw string
 }
 
 // orDefault reproduces bash's `${VAR:-default}`: raw is used verbatim
@@ -171,25 +178,27 @@ func orDefault(raw, def string) string {
 // below, not Load.
 func Load(getenv func(string) string) Config {
 	return Config{
-		PreviewWidth:      orDefault(getenv("SESH_BRO_PREVIEW_WIDTH"), "60%"),
-		Aliases:           orDefault(getenv("SESH_BRO_ALIASES"), ""),
-		Blacklist:         orDefault(getenv("SESH_BRO_BLACKLIST"), ""),
-		DefaultFilter:     orDefault(getenv("SESH_BRO_DEFAULT_FILTER"), "all"),
-		SortOrder:         orDefault(getenv("SESH_BRO_SORT_ORDER"), ""),
-		IconWorkspace:     orDefault(getenv("SESH_BRO_ICON_WORKSPACE"), "◆"),
-		IconAgent:         orDefault(getenv("SESH_BRO_ICON_AGENT"), "●"),
-		IconDir:           orDefault(getenv("SESH_BRO_ICON_DIR"), "▸"),
-		KeyWorkspaces:     orDefault(getenv("SESH_BRO_KEY_WORKSPACES"), "ctrl-w"),
-		KeyAgents:         orDefault(getenv("SESH_BRO_KEY_AGENTS"), "ctrl-e"),
-		KeyBlocked:        orDefault(getenv("SESH_BRO_KEY_BLOCKED"), "ctrl-b"),
-		KeyDirs:           orDefault(getenv("SESH_BRO_KEY_DIRS"), "ctrl-x"),
-		KeyAll:            orDefault(getenv("SESH_BRO_KEY_ALL"), "ctrl-o"),
-		KeyCreate:         orDefault(getenv("SESH_BRO_KEY_CREATE"), "ctrl-/"),
-		KeyClose:          orDefault(getenv("SESH_BRO_KEY_CLOSE"), "alt-x"),
-		attentionFirstRaw: orDefault(getenv("SESH_BRO_ATTENTION_FIRST"), "1"),
-		previewEnabledRaw: orDefault(getenv("SESH_BRO_PREVIEW_ENABLED"), "1"),
-		hideCurrentRaw:    orDefault(getenv("SESH_BRO_HIDE_CURRENT"), "0"),
-		dirSourcesRaw:     orDefault(getenv("SESH_BRO_DIR_SOURCES"), "1"),
+		PreviewWidth:       orDefault(getenv("SESH_BRO_PREVIEW_WIDTH"), "60%"),
+		Aliases:            orDefault(getenv("SESH_BRO_ALIASES"), ""),
+		Blacklist:          orDefault(getenv("SESH_BRO_BLACKLIST"), ""),
+		DefaultFilter:      orDefault(getenv("SESH_BRO_DEFAULT_FILTER"), "all"),
+		SortOrder:          orDefault(getenv("SESH_BRO_SORT_ORDER"), ""),
+		IconWorkspace:      orDefault(getenv("SESH_BRO_ICON_WORKSPACE"), "◆"),
+		IconAgent:          orDefault(getenv("SESH_BRO_ICON_AGENT"), "●"),
+		IconDir:            orDefault(getenv("SESH_BRO_ICON_DIR"), "▸"),
+		IconWorktree:       orDefault(getenv("SESH_BRO_ICON_WORKTREE"), "⑂"),
+		KeyWorkspaces:      orDefault(getenv("SESH_BRO_KEY_WORKSPACES"), "ctrl-w"),
+		KeyAgents:          orDefault(getenv("SESH_BRO_KEY_AGENTS"), "ctrl-e"),
+		KeyBlocked:         orDefault(getenv("SESH_BRO_KEY_BLOCKED"), "ctrl-b"),
+		KeyDirs:            orDefault(getenv("SESH_BRO_KEY_DIRS"), "ctrl-x"),
+		KeyAll:             orDefault(getenv("SESH_BRO_KEY_ALL"), "ctrl-o"),
+		KeyCreate:          orDefault(getenv("SESH_BRO_KEY_CREATE"), "ctrl-/"),
+		KeyClose:           orDefault(getenv("SESH_BRO_KEY_CLOSE"), "alt-x"),
+		attentionFirstRaw:  orDefault(getenv("SESH_BRO_ATTENTION_FIRST"), "1"),
+		previewEnabledRaw:  orDefault(getenv("SESH_BRO_PREVIEW_ENABLED"), "1"),
+		hideCurrentRaw:     orDefault(getenv("SESH_BRO_HIDE_CURRENT"), "0"),
+		dirSourcesRaw:      orDefault(getenv("SESH_BRO_DIR_SOURCES"), "1"),
+		worktreeSourcesRaw: orDefault(getenv("SESH_BRO_WORKTREE_SOURCES"), "1"),
 	}
 }
 
@@ -261,6 +270,15 @@ func (c Config) PreviewEnabled() (bool, error) {
 // human (BEHAVIOUR.md §10). Default on: the whole point of the 0.4.0 picker is
 // that the answer to "does anything want me" is already on screen. Turning it
 // off restores the pre-0.4.0 current-workspace-first ordering.
+// WorktreeSources reports whether the picker offers git worktrees that have no
+// workspace open on them (BEHAVIOUR.md §10.10). Default on: the whole value of
+// the source is surfacing checkouts you forgot you made, which is not something
+// you would think to switch on. Turning it off also skips the per-repo
+// worktree.list calls entirely.
+func (c Config) WorktreeSources() (bool, error) {
+	return ParseBoolFlag("SESH_BRO_WORKTREE_SOURCES", c.worktreeSourcesRaw)
+}
+
 func (c Config) AttentionFirst() (bool, error) {
 	return ParseBoolFlag("SESH_BRO_ATTENTION_FIRST", c.attentionFirstRaw)
 }
@@ -286,7 +304,12 @@ func (c Config) DirSources() (bool, error) {
 // Aliases, and Blacklist, which are consumed as raw strings elsewhere by
 // design (see the package doc comment).
 func (c Config) Icons() render.Icons {
-	return render.Icons{Workspace: c.IconWorkspace, Agent: c.IconAgent, Dir: c.IconDir}
+	return render.Icons{
+		Workspace: c.IconWorkspace,
+		Agent:     c.IconAgent,
+		Dir:       c.IconDir,
+		Worktree:  c.IconWorktree,
+	}
 }
 
 // Keys builds the picker.KeyBindings BuildArgs needs directly from the
@@ -301,6 +324,7 @@ func (c Config) Keys() picker.KeyBindings {
 		Agents:     c.KeyAgents,
 		Blocked:    c.KeyBlocked,
 		Dirs:       c.KeyDirs,
+		Worktrees:  c.KeyWorktrees,
 		All:        c.KeyAll,
 		Create:     c.KeyCreate,
 		Close:      c.KeyClose,

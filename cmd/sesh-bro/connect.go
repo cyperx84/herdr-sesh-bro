@@ -52,6 +52,8 @@ func connect(ctx context.Context, env *appEnv, client *herdrx.Client, openErr er
 		return nil
 	case "dir":
 		return connectDir(ctx, env, client, openErr, target)
+	case "worktree":
+		return connectWorktree(ctx, env, client, openErr, target)
 	default:
 		fmt.Fprintf(env.stderr, "sesh-bro connect: unknown type %s\n", kind)
 		os.Exit(2)
@@ -89,4 +91,30 @@ func connectDir(ctx context.Context, env *appEnv, client *herdrx.Client, openErr
 		return err
 	}
 	return nil
+}
+
+// connectWorktree opens an existing git worktree as a workspace.
+//
+// This is worktree.OPEN, not worktree.create: the worktree already exists on
+// disk — that is the entire reason it appeared as a row (WorktreeRows skips
+// any worktree that already has a workspace). Calling create here would try to
+// make a second worktree for a branch that already has one, which git refuses,
+// and the refusal would surface as a confusing failure on a row whose whole
+// promise is "open this".
+//
+// If it fails, fall back to opening the path as a plain workspace. A worktree
+// herdr will not open is still a directory the user can work in, and stranding
+// them because the specialised call failed would be worse than a workspace
+// that is merely not worktree-aware. Same shape as `worktree`'s own fallback.
+func connectWorktree(ctx context.Context, env *appEnv, client *herdrx.Client, openErr error, target string) error {
+	if openErr != nil {
+		fmt.Fprintf(env.stderr, "sesh-bro: failed to open worktree %s\n", target)
+		return openErr
+	}
+	if err := client.OpenWorktree(ctx, target, true); err == nil {
+		return nil
+	} else {
+		fmt.Fprintf(env.stderr, "sesh-bro: worktree.open failed for %s (%v) — opening it as a plain workspace\n", target, err)
+	}
+	return connectDir(ctx, env, client, openErr, target)
 }
