@@ -100,10 +100,10 @@ target=$(platform_target)
 # to a 404.
 expected_sha256() {
     case "$1" in
-        darwin-arm64) echo "UNRELEASED" ;;
-        darwin-amd64) echo "UNRELEASED" ;;
-        linux-amd64)  echo "UNRELEASED" ;;
-        linux-arm64)  echo "UNRELEASED" ;;
+        darwin-arm64) echo "1d237c435e5c559e07f3e9621e6fd4c19f33c2737a93adbf78bd3c1bae3d3f89" ;;
+        darwin-amd64) echo "4285c8fd92e74780db6380d18b3c0187607c7ee66f11e5cea6844e6cd4389162" ;;
+        linux-amd64)  echo "57d17b00698579a46e8b5c1381b33938c30753f2d5821a1cd43b5fc93634af8e" ;;
+        linux-arm64)  echo "4eec98a037331245df06d9aba0d0726babec91881e6001a8f9224b63f3f4d312" ;;
         *) return 1 ;;
     esac
 }
