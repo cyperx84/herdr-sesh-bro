@@ -100,6 +100,23 @@ title = "Jump to previous agent needing attention"
 contexts = ["global", "workspace"]
 command = ["./bin/sesh-bro", "prev"]
 
+# Workspace navigation, bindable as sesh-bro.last / sesh-bro.root
+# (github.com/cyperx84/herdr-sesh-bro/issues/2 asked for `last` specifically:
+# it worked as a CLI command from the start but was never exposed as an action,
+# so `command = "sesh-bro.last"` had nothing to bind to). "global" context so
+# the binding works from any pane, not only one with a workspace context.
+[[actions]]
+id = "last"
+title = "Toggle to the last workspace"
+contexts = ["global", "workspace"]
+command = ["./bin/sesh-bro", "last"]
+
+[[actions]]
+id = "root"
+title = "Focus or create the workspace for the current git root"
+contexts = ["global", "workspace"]
+command = ["./bin/sesh-bro", "root"]
+
 # Invoked by the github-worktree link handler; also runnable from the palette.
 [[actions]]
 id = "worktree"
