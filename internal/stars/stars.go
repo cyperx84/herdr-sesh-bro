@@ -169,7 +169,8 @@ func Set(stars Stars) map[string]bool {
 // The shape is attention's, deliberately, because the race is the same one
 // and the stakes are the ones its comment predicted. The writers are
 // independent short-lived processes — a pin typed in the picker, a prune
-// from the next `list` — and with the lock held only around the write, two
+// at the next herdr server start — and with the lock held only around the
+// write, two
 // of them could both Load, both mutate their own copy, and both write,
 // losing one change silently. In attention that costs a badge; here it
 // would erase something a human did. There is deliberately no Save: every

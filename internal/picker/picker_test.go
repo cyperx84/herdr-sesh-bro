@@ -518,34 +518,70 @@ func TestEveryReloadProducesAHeaderLine(t *testing.T) {
 	}
 }
 
-// With a RowsDir every reload goes through `rows`, which reads the view marker.
-// The previous form re-executed `list` with no source flags, so pressing close
-// or create threw the user back to the all-sources view no matter which filter
-// was active — and left the marker untouched, so the next live push switched
-// the list back again.
-func TestCloseAndCreateReloadPreserveTheView(t *testing.T) {
+// Every bind that CHANGES something must reload the view the user is looking
+// at, freshly rendered.
+//
+// Two separate defects are pinned here, and dropping either half brings one
+// back. Without --view-dir the reload re-executes plain `list`, which throws
+// the user back to the all-sources view no matter which filter was active and
+// leaves the marker saying otherwise, so the next live push switches the list
+// back again. Without a real render — catting the pre-rendered file through
+// `rows` instead — the reload shows rows built BEFORE the action: star is the
+// case that proves it, because a pin moves no herdr state and so fires no
+// event, and nothing would ever repaint those files.
+func TestMutatingBindsReloadTheCurrentViewFreshly(t *testing.T) {
 	got := BuildArgs(Options{
 		SelfPath: "/bin/sesh-bro", RowsDir: "/run/p1",
 		Fzf: Features{Version: "0.74.3", Listen: true},
 	})
-	var closeBind, createBind string
+	binds := map[string]string{}
 	for _, a := range got {
 		switch {
 		case strings.HasPrefix(a, "--bind=alt-x:"):
-			closeBind = a
+			binds["close"] = a
 		case strings.HasPrefix(a, "--bind=ctrl-/:"):
-			createBind = a
+			binds["create"] = a
+		case strings.HasPrefix(a, "--bind=ctrl-s:"):
+			binds["star"] = a
 		}
 	}
-	for name, bind := range map[string]string{"close": closeBind, "create": createBind} {
+	for _, name := range []string{"close", "create", "star"} {
+		bind := binds[name]
 		if bind == "" {
 			t.Fatalf("%s bind missing from %v", name, got)
 		}
-		if !strings.Contains(bind, "rows --dir '/run/p1'") {
+		if !strings.Contains(bind, "--view-dir '/run/p1'") {
 			t.Errorf("%s bind does not reload the current view: %q", name, bind)
 		}
-		if strings.Contains(bind, "reload('/bin/sesh-bro' list") {
-			t.Errorf("%s bind still re-execs list, discarding the active filter: %q", name, bind)
+		if strings.Contains(bind, "rows --dir") {
+			t.Errorf("%s bind reloads pre-rendered rows, so its own change is invisible: %q", name, bind)
+		}
+	}
+}
+
+// The filter keys are the other side of that rule: they change what is on
+// screen without changing what is true, and they run on a keypress. They must
+// stay on the cheap path — no process that opens a socket, no re-render.
+func TestFilterKeysReloadFromPreRenderedFiles(t *testing.T) {
+	got := BuildArgs(Options{
+		SelfPath: "/bin/sesh-bro", RowsDir: "/run/p1",
+		Fzf: Features{Version: "0.74.3", Listen: true},
+	})
+	for _, key := range []string{"ctrl-w", "ctrl-e", "ctrl-b", "ctrl-x", "ctrl-t", "ctrl-o"} {
+		var bind string
+		for _, a := range got {
+			if strings.HasPrefix(a, "--bind="+key+":") {
+				bind = a
+			}
+		}
+		if bind == "" {
+			t.Fatalf("%s bind missing from %v", key, got)
+		}
+		if !strings.Contains(bind, "/run/p1/") || !strings.Contains(bind, ".tsv") {
+			t.Errorf("%s bind does not cat a pre-rendered view file: %q", key, bind)
+		}
+		if strings.Contains(bind, "sesh-bro' list") {
+			t.Errorf("%s bind re-renders on a filter keypress: %q", key, bind)
 		}
 	}
 }

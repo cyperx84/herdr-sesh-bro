@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -232,5 +234,75 @@ func TestPanesToExternal(t *testing.T) {
 	out := panesToExternal(in)
 	if len(out) != 2 || out[0].WorkspaceID != "w1" || out[0].CWD != "/a" || out[1].WorkspaceID != "w2" || out[1].CWD != "/b" {
 		t.Fatalf("panesToExternal() = %+v", out)
+	}
+}
+
+// TestExpandViewDir_SubstitutesTheMarkersView proves the star bind's reload
+// renders the view the user is looking at, not the default one.
+func TestExpandViewDir_SubstitutesTheMarkersView(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "view"), []byte("blocked"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := expandViewDir([]string{"--header", "--view-dir", dir, "--hide-current"})
+	want := []string{"--header", "--blocked", "--hide-current"}
+	assertArgs(t, got, want)
+
+	got = expandViewDir([]string{"--header", "--view-dir=" + dir})
+	assertArgs(t, got, []string{"--header", "--blocked"})
+}
+
+// TestExpandViewDir_MissingMarkerIsTheFullList: an absent or unrecognised
+// marker degrades to "all", which viewFlags renders as no source flags at all
+// — the full list. Degrading to an EMPTY list instead would make a star look
+// like it deleted every row.
+func TestExpandViewDir_MissingMarkerIsTheFullList(t *testing.T) {
+	got := expandViewDir([]string{"--header", "--view-dir", t.TempDir()})
+	assertArgs(t, got, []string{"--header"})
+}
+
+// TestExpandViewDir_LeavesOtherArgsAlone: no --view-dir means the args reach
+// parseListFlags byte for byte, so the one-shot `list` path is untouched.
+func TestExpandViewDir_LeavesOtherArgsAlone(t *testing.T) {
+	in := []string{"--agents", "--json", "--hide-current"}
+	assertArgs(t, expandViewDir(in), in)
+}
+
+// TestExpandViewDir_SubstitutesInPlace pins the ordering contract:
+// parseListFlags clears the source flags parsed BEFORE a status flag (§9 S3),
+// so where the expansion lands changes the result. `--dirs --view-dir <blocked>`
+// must mean "blocked agents only", the same as `--dirs --blocked`.
+func TestExpandViewDir_SubstitutesInPlace(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "view"), []byte("blocked"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := parseListFlags(expandViewDir([]string{"--dirs", "--view-dir", dir}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.wantDir || f.wantWS || !f.wantAgent {
+		t.Fatalf("got wantWS=%v wantDir=%v wantAgent=%v, want false/false/true", f.wantWS, f.wantDir, f.wantAgent)
+	}
+}
+
+// TestExpandViewDir_ValuelessFlagStaysUnknown: `--view-dir` with nothing after
+// it falls through untouched so parseListFlags rejects it (exit 2), rather
+// than being silently swallowed as a no-op.
+func TestExpandViewDir_ValuelessFlagStaysUnknown(t *testing.T) {
+	if _, err := parseListFlags(expandViewDir([]string{"--view-dir"})); err == nil {
+		t.Fatal("want an error for a valueless --view-dir")
+	}
+}
+
+func assertArgs(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
 	}
 }

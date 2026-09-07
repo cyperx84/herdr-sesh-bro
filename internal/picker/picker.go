@@ -734,22 +734,34 @@ func viewBind(opts Options, key, view, selfQ, hide string) string {
 const viewMarkerFile = "view"
 
 // reloadCurrent is the reload action for a bind that must redisplay whatever
-// view is currently on screen — close and create, which mutate the session and
-// then need the list refreshed in place.
+// view is currently on screen after CHANGING something — close, create and
+// star.
 //
-// With a RowsDir it defers to `rows`, which reads the view marker and cats the
-// matching pre-rendered file. That is the whole point: the previous form
-// re-executed `list` with no flags, which reset the display to the default
-// all-sources view no matter which filter the user had active, AND left the
-// marker untouched so the next live push switched it back again. Routing
-// through `rows` means one command decides what a reload emits, and it cannot
-// forget the header row --header-lines=1 requires.
+// With a RowsDir it re-executes `list --view-dir`, which reads the view marker
+// and renders that view fresh. Both halves matter, and each rules out an
+// obvious simpler form:
 //
-// Without a RowsDir there are no files to read, so it falls back to the 0.3.0
-// re-exec — with --header, which the pre-0.4.1 form omitted.
+//   - The marker is why it is not plain `list --header`. That resets the
+//     display to the default all-sources view no matter which filter the user
+//     had active, and leaves the marker saying otherwise, so the next live
+//     push silently switches it back (BEHAVIOUR.md §10.6).
+//   - A real render is why it is not `rows`, which cats the pre-rendered file.
+//     These binds have just changed what the list should say, and star is the
+//     case that proves it: a pin moves no herdr state, so no event fires, so
+//     nothing re-renders those files — the star would not appear until some
+//     unrelated event happened to repaint. Close and create do fire events,
+//     but the reload runs first and would show the closed workspace still
+//     there until the push landed.
+//
+// `rows` remains the right answer for the FILTER keys, which change what is on
+// screen without changing what is true, and run on a keypress rather than on a
+// mutation.
+//
+// Without a RowsDir there are no files and no marker, so it falls back to the
+// 0.3.0 re-exec — with --header, which the pre-0.4.1 form omitted.
 func reloadCurrent(opts Options, selfQ, hide string) string {
 	if opts.RowsDir == "" {
 		return fmt.Sprintf("reload(%s list --header %s)", selfQ, hide)
 	}
-	return fmt.Sprintf("reload(%s rows --dir %s)", selfQ, quoteSingle(opts.RowsDir))
+	return fmt.Sprintf("reload(%s list --header --view-dir %s %s)", selfQ, quoteSingle(opts.RowsDir), hide)
 }

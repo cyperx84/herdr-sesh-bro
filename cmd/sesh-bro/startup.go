@@ -22,6 +22,7 @@ import (
 	"github.com/cyperx84/herdr-sesh-bro/internal/external"
 	"github.com/cyperx84/herdr-sesh-bro/internal/herdrx"
 	"github.com/cyperx84/herdr-sesh-bro/internal/picker"
+	"github.com/cyperx84/herdr-sesh-bro/internal/stars"
 )
 
 // detectFzf is a seam so tests can report a chosen fzf version without one
@@ -102,5 +103,26 @@ func pruneState(ctx context.Context, env *appEnv, client *herdrx.Client, openErr
 	}
 	_ = attentionUpdate(statePath(env.getenv), func(s *attention.State) {
 		s.Prune(panes, workspaces)
+	})
+
+	// Stars are pruned on the same pass and at the same cadence, but against
+	// their own keys: a star names an agent by NAME when it has one, so it is
+	// judged by the live agent names, not by the pane map above. That is the
+	// identity rule doing its job — a named agent whose pane was destroyed and
+	// recreated keeps its pin, while a star on an unnamed agent dies with the
+	// pane that was its only identity.
+	//
+	// Once per herdr server start is the right cadence for both. Doing it on
+	// every `list` would put a write on the picker's hot path for a file that
+	// grows by one entry per deliberate keypress, and it would race the pin
+	// the user just pressed against a snapshot taken a moment before.
+	names := make(map[string]bool, len(snap.Agents))
+	for _, a := range snap.Agents {
+		if a.Name != "" {
+			names[a.Name] = true
+		}
+	}
+	_ = starsUpdate(starsPath(env.getenv), func(s *stars.Stars) {
+		s.Prune(names, panes)
 	})
 }

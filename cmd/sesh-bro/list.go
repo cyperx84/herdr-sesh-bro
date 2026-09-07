@@ -478,7 +478,7 @@ func listOutput(ctx context.Context, env *appEnv, args []string, w io.Writer) er
 	// exits 2 even with herdr missing or the daemon down (BEHAVIOUR.md
 	// §2.2.11's own table: "unknown flag" is its own row, independent of
 	// the dependency rows).
-	flags, err := parseListFlags(args)
+	flags, err := parseListFlags(expandViewDir(args))
 	if err != nil {
 		return &listFlagError{err}
 	}
@@ -634,6 +634,41 @@ func ageBadges(src listSources, now time.Time) map[string]string {
 		status := string(herdrx.NormalizeStatus(a.Status))
 		if d, ok := attention.Since(src.state, a.PaneID, status, now); ok {
 			out[a.PaneID] = attention.FormatAge(d)
+		}
+	}
+	return out
+}
+
+// expandViewDir rewrites `--view-dir <runtime dir>` into the source flags of
+// whichever view that directory's marker says is on screen.
+//
+// It exists for one bind: the star key. Starring an agent changes only a file
+// on disk — no herdr state moves, so no event fires, so the live renderer has
+// no reason to re-render and rewrite the row files. A bind that reloaded
+// through `rows` would therefore cat the TSV rendered BEFORE the toggle and
+// show no star at all until some unrelated event happened to repaint. The
+// obvious alternative, re-executing plain `list`, is fresh but throws away the
+// active filter — the exact defect §10.6 removed from the close and create
+// binds. `--view-dir` is both: a real render, restricted to the view the user
+// is actually looking at.
+//
+// Expansion is IN PLACE rather than prepended, because parseListFlags is
+// order-sensitive by design (a status flag clears the source flags parsed
+// before it, BEHAVIOUR.md §9 S3). Substituting where the flag stood keeps the
+// caller's intended ordering intact. An unreadable or unrecognised marker
+// yields the "all" view, matching readView, so a missing file degrades to the
+// full list rather than to an empty one.
+func expandViewDir(args []string) []string {
+	out := make([]string, 0, len(args)+1)
+	for i := 0; i < len(args); i++ {
+		switch {
+		case args[i] == "--view-dir" && i+1 < len(args):
+			out = append(out, viewFlags(readView(args[i+1]))...)
+			i++
+		case strings.HasPrefix(args[i], "--view-dir="):
+			out = append(out, viewFlags(readView(strings.TrimPrefix(args[i], "--view-dir=")))...)
+		default:
+			out = append(out, args[i])
 		}
 	}
 	return out
