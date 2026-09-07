@@ -30,6 +30,7 @@ type listFlags struct {
 	statuses                   []herdr.AgentStatus
 	hideCurrent                bool
 	asJSON                     bool
+	asJSONL                    bool
 	// header emits a pinned counts row as the first line, for fzf's
 	// --header-lines=1. Like --json it is an OUTPUT flag: parseListFlags must
 	// not let it touch the source selection, or `list --header --agents`
@@ -74,6 +75,8 @@ func parseListFlags(args []string) (listFlags, error) {
 			f.hideCurrent = true
 		case "--json":
 			f.asJSON = true
+		case "--jsonl":
+			f.asJSONL = true
 		case "--header":
 			f.header = true
 		default:
@@ -370,7 +373,7 @@ func renderRows(ctx context.Context, cfg config.Config, flags listFlags, src lis
 		// JSON output stays machine-shaped: a badge is a display affordance,
 		// and an age baked into a detail string is not something a consumer
 		// should have to parse back out.
-		if !flags.asJSON {
+		if !flags.asJSON && !flags.asJSONL {
 			agRows = herdrx.WithAges(agRows, ageBadges(src, time.Now()))
 		}
 	}
@@ -409,7 +412,7 @@ func renderRows(ctx context.Context, cfg config.Config, flags listFlags, src lis
 
 	// Git enrichment: sesh-bro:235-265, BEHAVIOUR.md §2.2.8 — JSON output
 	// skips it entirely (§2.2.9).
-	if !flags.asJSON && len(raw) > 0 && external.GitAvailable() {
+	if !flags.asJSON && !flags.asJSONL && len(raw) > 0 && external.GitAvailable() {
 		wsCWD := external.WorkspaceCWDs(panesToExternal(src.snap.Panes))
 		gitMap := src.git.Enrich(ctx, "", wsCWD)
 		for i := range raw {
@@ -422,6 +425,15 @@ func renderRows(ctx context.Context, cfg config.Config, flags listFlags, src lis
 		}
 	}
 
+	if flags.asJSONL {
+		// One compact object per line. --json's concatenated pretty objects are
+		// pinned byte for byte by BEHAVIOUR.md §9 S8 and cannot change, but
+		// they are also not what a consumer wants: json.loads chokes on
+		// several objects in one string, so every caller has to write a
+		// splitter first. --jsonl is the shape to hand an agent.
+		writeJSONLRows(w, raw)
+		return nil
+	}
 	if flags.asJSON {
 		// No header row in JSON: it is a display affordance for fzf, not a
 		// candidate, and a consumer parsing rows should not have to skip it.
@@ -429,7 +441,7 @@ func renderRows(ctx context.Context, cfg config.Config, flags listFlags, src lis
 		return nil
 	}
 
-	if flags.header {
+	if flags.header && !flags.asJSONL {
 		// The counts describe the whole session, not the filtered view: the
 		// question the header answers is "is anything waiting anywhere",
 		// which must not change because the user pressed the dirs key.
@@ -557,6 +569,29 @@ type jsonRow struct {
 // (e.g. a workspace label or terminal title containing one), and jq's
 // output never does — a workspace labelled "A&B" must round-trip as
 // literal "A&B", not "A&B".
+// writeJSONLRows emits one compact JSON object per line.
+//
+// The field set is deliberately identical to writeJSONRows' — a consumer
+// switching between them should not have to learn two schemas — but the
+// framing is the opposite: compact and newline-delimited rather than pretty
+// and concatenated. Newline-delimited JSON is the format a caller can stream,
+// and the one every language parses without a custom splitter.
+func writeJSONLRows(w io.Writer, rows []herdrx.Row) {
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	for _, r := range rows {
+		// Errors here mean w is broken, which the caller will discover from
+		// its own writer; there is nothing useful to do per row.
+		_ = enc.Encode(jsonRow{
+			Type:   string(r.Type),
+			Target: r.Target,
+			Status: r.Status,
+			Label:  r.Label,
+			Detail: r.Detail,
+		})
+	}
+}
+
 func writeJSONRows(w io.Writer, rows []herdrx.Row) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

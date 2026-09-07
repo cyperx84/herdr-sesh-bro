@@ -46,6 +46,8 @@ var commands = []commandSpec{
 		Run: cmdPicker},
 	{Name: "list", Args: "[flags]", Summary: "print picker candidates (type, target, display)",
 		Headless: true, Run: cmdList},
+	{Name: "agents", Args: "[flags]", Summary: "list agents (list --agents, without the flag-order trap)",
+		Headless: true, Run: cmdAgents},
 	{Name: "counts", Args: "[flags]", Summary: "one line: how many agents are blocked/working/done/idle",
 		Headless: true, Run: cmdCounts},
 	{Name: "next", Summary: "focus the next agent needing attention (blocked, then done)",
