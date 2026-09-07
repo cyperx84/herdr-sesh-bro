@@ -212,6 +212,7 @@ type KeyBindings struct {
 	Blocked    string // reload: blocked agents only.
 	Dirs       string // reload: directories only.
 	Worktrees  string // reload: unopened git worktrees only.
+	Star       string // toggle the highlighted agent's pin.
 	All        string // reload: all sources.
 	Create     string // execute-silent create, then reload.
 	// Close is Feature A's new bind (docs/COMPETITIVE-DEMAND.md #1: "Close /
@@ -241,6 +242,7 @@ var DefaultKeyBindings = KeyBindings{
 	Blocked:    "ctrl-b",
 	Dirs:       "ctrl-x",
 	Worktrees:  "ctrl-t",
+	Star:       "ctrl-s",
 	All:        "ctrl-o",
 	Create:     "ctrl-/",
 	Close:      "alt-x",
@@ -323,6 +325,7 @@ func (k KeyBindings) resolved() KeyBindings {
 		Blocked:    sanitizeKey(k.Blocked, DefaultKeyBindings.Blocked),
 		Dirs:       sanitizeKey(k.Dirs, DefaultKeyBindings.Dirs),
 		Worktrees:  sanitizeKey(k.Worktrees, DefaultKeyBindings.Worktrees),
+		Star:       sanitizeKey(k.Star, DefaultKeyBindings.Star),
 		All:        sanitizeKey(k.All, DefaultKeyBindings.All),
 		Create:     sanitizeKey(k.Create, DefaultKeyBindings.Create),
 		Close:      sanitizeKey(k.Close, DefaultKeyBindings.Close),
@@ -442,10 +445,10 @@ func BuildArgs(opts Options) []string {
 	// frees the header for the live counts row. Below that version they stay
 	// exactly where they have always been.
 	hints := fmt.Sprintf(
-		"enter connect · %s workspaces · %s agents · %s blocked · %s dirs · %s worktrees · %s all · %s close · %s create",
+		"enter connect · %s workspaces · %s agents · %s blocked · %s dirs · %s worktrees · %s all · %s star · %s close · %s create",
 		keyLabel(keys.Workspaces), keyLabel(keys.Agents), keyLabel(keys.Blocked),
 		keyLabel(keys.Dirs), keyLabel(keys.Worktrees), keyLabel(keys.All),
-		keyLabel(keys.Close), keyLabel(keys.Create),
+		keyLabel(keys.Star), keyLabel(keys.Close), keyLabel(keys.Create),
 	)
 	if opts.Fzf.Footer {
 		args = append(args, "--footer="+hints)
@@ -522,6 +525,10 @@ func BuildArgs(opts Options) []string {
 		viewBind(opts, keys.Blocked, "blocked", selfQ, hide),
 		viewBind(opts, keys.Dirs, "dirs", selfQ, hide),
 		viewBind(opts, keys.Worktrees, "worktrees", selfQ, hide),
+		// Pin the highlighted agent. execute-silent because there is nothing
+		// to confirm and nothing to read — unlike close, a pin is trivially
+		// reversible by pressing the same key again.
+		fmt.Sprintf("--bind=%s:execute-silent(%s star --toggle {2})+%s", keys.Star, selfQ, reloadCurrent(opts, selfQ, hide)),
 		viewBind(opts, keys.All, "all", selfQ, hide),
 		fmt.Sprintf("--bind=%s:execute-silent(%s create)+%s", keys.Create, selfQ, reloadCurrent(opts, selfQ, hide)),
 	)

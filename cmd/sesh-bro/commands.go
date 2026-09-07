@@ -58,6 +58,10 @@ var commands = []commandSpec{
 		Headless: true, Run: func(ctx context.Context, env *appEnv, args []string) int {
 			return cmdNext(ctx, env, args, -1)
 		}},
+	{Name: "star", Args: "TARGET | --list", Summary: "pin an agent to the top of its status group (--toggle, --off)",
+		Headless: true, Run: cmdStar},
+	{Name: "prompt", Args: "TARGET... --text S", Summary: "send text to agents as if typed (--all-blocked, --from-file)",
+		Headless: true, Run: cmdPrompt},
 	{Name: "wait", Args: "--target A [--until S] [--timeout D]", Summary: "block until an agent settles; exit 3 on timeout",
 		Headless: true, Run: cmdWait},
 	{Name: "read", Args: "TARGET [--source S]", Summary: "print what an agent's pane shows (--source recent-unwrapped for scrollback)",

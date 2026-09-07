@@ -530,3 +530,110 @@ func TestSplitAttentionHoistsOnlyBlockedAndDone(t *testing.T) {
 		t.Fatalf("rest = %v, want the idle, working, and unknown rows left in place", rest)
 	}
 }
+
+// starRow builds an agent row the way AgentRows would, so the star tests
+// exercise the same identity keys (name when named, pane id when not) the
+// picker's rows actually carry.
+func starRow(name, paneID, status string) Row {
+	target := name
+	if target == "" {
+		target = paneID
+	}
+	return Row{Type: RowAgent, Target: target, PaneID: paneID, Status: status, Label: target}
+}
+
+func starTargets(rows []Row) []string {
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Label
+	}
+	return out
+}
+
+// TestWithStars_LeadsItsRankNotTheList is the ordering promise: a starred
+// idle agent leads the idle ones and STILL sits below every blocked agent.
+// A pin that could bury a blocked agent would break attention-first, which
+// is the whole point of the picker's ordering.
+func TestWithStars_LeadsItsRankNotTheList(t *testing.T) {
+	rows := []Row{
+		starRow("b1", "p1", "blocked"),
+		starRow("b2", "p2", "blocked"),
+		starRow("i1", "p3", "idle"),
+		starRow("i2", "p4", "idle"),
+	}
+	got := WithStars(rows, map[string]bool{"agent:i2": true})
+	want := []string{"b1", "b2", "★ i2", "i1"}
+	assertLabels(t, starTargets(got), want)
+}
+
+// TestWithStars_DoesNotCrossTheCurrentFirstBoundary: AgentRows sorts
+// current-workspace-first ABOVE status rank, so one status can appear in two
+// separate runs. A star must lead its own run, not jump into the run above.
+func TestWithStars_DoesNotCrossTheCurrentFirstBoundary(t *testing.T) {
+	rows := []Row{
+		starRow("cur-blocked", "p1", "blocked"),
+		starRow("cur-idle", "p2", "idle"),
+		starRow("far-blocked", "p3", "blocked"),
+		starRow("far-idle", "p4", "idle"),
+	}
+	got := WithStars(rows, map[string]bool{"agent:far-blocked": true})
+	want := []string{"cur-blocked", "cur-idle", "★ far-blocked", "far-idle"}
+	assertLabels(t, starTargets(got), want)
+}
+
+// TestWithStars_PaneIdentityForUnnamedAgents: an agent with no name is
+// starred by pane id, and the row layer must find it by the same key.
+func TestWithStars_PaneIdentityForUnnamedAgents(t *testing.T) {
+	rows := []Row{
+		starRow("named", "p1", "idle"),
+		starRow("", "p2", "idle"),
+	}
+	got := WithStars(rows, map[string]bool{"pane:p2": true})
+	want := []string{"★ p2", "named"}
+	assertLabels(t, starTargets(got), want)
+}
+
+// TestWithStars_EmptySetIsIdentity: no pins means no relabelling and no
+// reordering at all — the common case must not touch the rows.
+func TestWithStars_EmptySetIsIdentity(t *testing.T) {
+	rows := []Row{starRow("a", "p1", "idle"), starRow("b", "p2", "blocked")}
+	got := WithStars(rows, nil)
+	assertLabels(t, starTargets(got), []string{"a", "b"})
+}
+
+// TestWithStars_NonAgentRowsAreNeverMoved: workspace and dir rows break a
+// run and are never starred, so a pin cannot reorder the blocks around it.
+func TestWithStars_NonAgentRowsAreNeverMoved(t *testing.T) {
+	rows := []Row{
+		{Type: RowWorkspace, Target: "w1", Status: "idle", Label: "w1"},
+		starRow("a1", "p1", "idle"),
+		starRow("a2", "p2", "idle"),
+	}
+	got := WithStars(rows, map[string]bool{"agent:a2": true})
+	assertLabels(t, starTargets(got), []string{"w1", "★ a2", "a1"})
+}
+
+// TestWithStars_PreservesOrderWithinBothGroups: several stars keep their
+// incoming relative order, and so do the unstarred rows behind them.
+func TestWithStars_PreservesOrderWithinBothGroups(t *testing.T) {
+	rows := []Row{
+		starRow("a", "p1", "idle"),
+		starRow("b", "p2", "idle"),
+		starRow("c", "p3", "idle"),
+		starRow("d", "p4", "idle"),
+	}
+	got := WithStars(rows, map[string]bool{"agent:b": true, "agent:d": true})
+	assertLabels(t, starTargets(got), []string{"★ b", "★ d", "a", "c"})
+}
+
+func assertLabels(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}

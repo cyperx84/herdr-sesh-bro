@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/cyperx84/herdr-sesh-bro/internal/attention"
+	"github.com/cyperx84/herdr-sesh-bro/internal/stars"
 )
 
 // statePath is where the recorded attention state lives.
@@ -47,10 +48,19 @@ func statePath(getenv func(string) string) string {
 	return filepath.Join(base, fmt.Sprintf("sesh-bro-%d", os.Getuid()), "state.json")
 }
 
+// starsPath is where pinned agents live, beside the attention state but in
+// their own file — see internal/stars' package comment for why the two are not
+// merged.
+func starsPath(getenv func(string) string) string {
+	return filepath.Join(filepath.Dir(statePath(getenv)), "stars.json")
+}
+
 // attentionLoad and attentionSave are indirections so tests can observe the
 // recording path without a real state directory.
 var (
 	attentionLoad   = attention.Load
 	attentionSave   = attention.Save
 	attentionUpdate = attention.Update
+	starsLoad       = stars.Load
+	starsUpdate     = stars.Update
 )

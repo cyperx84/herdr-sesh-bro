@@ -495,3 +495,90 @@ func CountByStatus(agents []Agent) map[herdr.AgentStatus]int {
 	}
 	return counts
 }
+
+// StarKey is the identity a pinned agent is remembered by: its name when it
+// has one, its pane id otherwise.
+//
+// A name survives the pane being recreated, which is what makes a pin worth
+// having across restarts. A pane id does not, so pinning an unnamed agent
+// lasts exactly as long as that pane — stated plainly in the docs rather than
+// papered over by renaming the agent, which would be a side effect nobody
+// asked for. The returned kind matches internal/stars' Star.Kind.
+func StarKey(a Agent) (kind, key string) {
+	if a.Name != "" {
+		return "agent", a.Name
+	}
+	return "pane", a.PaneID
+}
+
+// WithStars marks pinned agent rows and floats them to the top of their own
+// status group.
+//
+// Within the rank, not above it. A star saying "this one matters to me" must
+// not outrank an agent saying "I am blocked and cannot continue" — the picker
+// opening on whoever needs you is the promise the whole ordering rests on, and
+// a pin that could bury a blocked agent would quietly break it. So a starred
+// idle agent leads the idle ones and still sits below every blocked agent,
+// which is both useful and safe.
+func WithStars(rows []Row, starred map[string]bool) []Row {
+	if len(starred) == 0 {
+		return rows
+	}
+	isStar := func(r Row) bool {
+		return r.Type == RowAgent && (starred["agent:"+r.Target] || starred["pane:"+r.PaneID])
+	}
+	for i := range rows {
+		if isStar(rows[i]) {
+			rows[i].Label = "★ " + rows[i].Label
+		}
+	}
+
+	// Partition within contiguous runs of equal-status agent rows, never
+	// with a comparator over the whole slice.
+	//
+	// The obvious implementation — sort.SliceStable with a less that returns
+	// "starred beats unstarred, and false whenever the ranks differ" — is not
+	// a strict weak ordering. It reports every cross-rank pair equal in both
+	// directions while ordering same-rank pairs, so equality is not
+	// transitive (blocked-A == idle-B and idle-B == blocked-C, yet
+	// blocked-C < blocked-A), and a sort is free to emit any permutation for
+	// such a comparator.
+	//
+	// A run is broken by ANY change in status and by any non-agent row, which
+	// is what keeps the rest of the incoming order intact: AgentRows sorts by
+	// current-workspace-first ABOVE status rank, so the same rank can appear
+	// in two separate places, and a star must lead its own run rather than
+	// jump the current-first boundary into someone else's.
+	for i := 0; i < len(rows); {
+		if rows[i].Type != RowAgent {
+			i++
+			continue
+		}
+		j := i
+		for j < len(rows) && rows[j].Type == RowAgent && rows[j].Status == rows[i].Status {
+			j++
+		}
+		stablePartitionStarsFirst(rows[i:j], isStar)
+		i = j
+	}
+	return rows
+}
+
+// stablePartitionStarsFirst moves the starred rows of one run to its front,
+// preserving the relative order of both groups.
+func stablePartitionStarsFirst(run []Row, isStar func(Row) bool) {
+	starred := make([]Row, 0, len(run))
+	rest := make([]Row, 0, len(run))
+	for _, r := range run {
+		if isStar(r) {
+			starred = append(starred, r)
+			continue
+		}
+		rest = append(rest, r)
+	}
+	if len(starred) == 0 || len(rest) == 0 {
+		return
+	}
+	copy(run, starred)
+	copy(run[len(starred):], rest)
+}

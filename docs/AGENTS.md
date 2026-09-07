@@ -110,6 +110,52 @@ marker, focusing does.
 
 `close` cannot be undone. It closes the workspace and every agent in it.
 
+### Answer an agent that is waiting on you
+
+```sh
+sesh-bro prompt builder --text "yes, go ahead"   # send text as if typed
+sesh-bro prompt --all-blocked --text "continue"  # every blocked agent at once
+sesh-bro prompt builder --text - < answer.txt    # read the text from stdin
+sesh-bro prompt builder --text "run the tests" --wait
+```
+
+`prompt` is how you unblock an agent without taking its terminal. The text is
+delivered as if a human typed it and pressed enter, so it answers an approval
+prompt or a question exactly the way that agent expects.
+
+With several targets it reports one result per target and never abandons the
+batch because one failed: an agent whose pane has gone still leaves the others
+prompted. `--json` gives you that per-target result to branch on.
+
+`--wait` blocks until the agent settles again, which turns "send and hope" into
+"send and know". Without it the command returns as soon as the text is
+delivered. herdr reports a `agent_prompt_stalled` condition when an agent takes
+the text but nothing in its lifecycle moves within five seconds; that is
+surfaced as a failure for that target, not silently swallowed.
+
+There is deliberately no approve-everything flag. Answering one agent you are
+looking at is a different act from a standing policy that says yes to every
+approval prompt on the machine, which would defeat the confirmations those
+agents implement on purpose.
+
+### Pin the agents you care about
+
+```sh
+sesh-bro star builder --toggle   # pin, or unpin if already pinned
+sesh-bro star builder            # pin
+sesh-bro star builder --off      # unpin
+sesh-bro star --list --json      # what is pinned
+```
+
+A star floats an agent to the top of its own status group, not to the top of
+the list. A pinned idle agent leads the idle ones and still sits below every
+blocked agent, so pinning can never bury something that actually needs a human.
+
+An agent with a name is pinned by that name, so the pin survives its pane being
+destroyed and recreated. An agent with no name is pinned by pane id, and that
+pin therefore lasts only as long as the pane. sesh-bro will not name an agent on
+your behalf to make a pin durable.
+
 ### Work on a GitHub issue
 
 ```sh

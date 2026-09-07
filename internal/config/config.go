@@ -122,6 +122,7 @@ type Config struct {
 	KeyBlocked    string
 	KeyDirs       string
 	KeyWorktrees  string
+	KeyStar       string
 	KeyAll        string
 	KeyCreate     string
 	KeyClose      string
@@ -325,6 +326,7 @@ func (c Config) Keys() picker.KeyBindings {
 		Blocked:    c.KeyBlocked,
 		Dirs:       c.KeyDirs,
 		Worktrees:  c.KeyWorktrees,
+		Star:       c.KeyStar,
 		All:        c.KeyAll,
 		Create:     c.KeyCreate,
 		Close:      c.KeyClose,

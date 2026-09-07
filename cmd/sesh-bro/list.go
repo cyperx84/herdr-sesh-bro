@@ -21,6 +21,7 @@ import (
 	"github.com/cyperx84/herdr-sesh-bro/internal/external"
 	"github.com/cyperx84/herdr-sesh-bro/internal/herdrx"
 	"github.com/cyperx84/herdr-sesh-bro/internal/render"
+	"github.com/cyperx84/herdr-sesh-bro/internal/stars"
 )
 
 // listFlags is cmd_list's parsed argument state (sesh-bro:130).
@@ -139,6 +140,8 @@ type listSources struct {
 	// its status, for the time-in-state badges. Empty when nothing has been
 	// recorded yet, which costs badges and nothing else.
 	state attention.State
+	// starred is the pinned-agent lookup, keyed "<kind>:<key>".
+	starred map[string]bool
 }
 
 // loadSources performs every read `list` needs: one session.snapshot, plus
@@ -192,7 +195,11 @@ func refreshSources(ctx context.Context, env *appEnv, cfg config.Config, flags l
 		return listSources{}, err
 	}
 
-	src := listSources{snap: snap, state: attention.Load(statePath(env.getenv))}
+	src := listSources{
+		snap:    snap,
+		state:   attention.Load(statePath(env.getenv)),
+		starred: stars.Set(starsLoad(starsPath(env.getenv))),
+	}
 	if prev != nil && prev.git != nil && time.Since(prev.gitAt) < gitCacheTTL {
 		src.git, src.gitAt = prev.git, prev.gitAt
 	} else {
@@ -375,6 +382,9 @@ func renderRows(ctx context.Context, cfg config.Config, flags listFlags, src lis
 		// should have to parse back out.
 		if !flags.asJSON && !flags.asJSONL {
 			agRows = herdrx.WithAges(agRows, ageBadges(src, time.Now()))
+			// After ages, so the star prefixes the label rather than landing
+			// in the middle of a row that has just grown a badge.
+			agRows = herdrx.WithStars(agRows, src.starred)
 		}
 	}
 
