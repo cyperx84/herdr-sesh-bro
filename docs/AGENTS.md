@@ -138,6 +138,31 @@ looking at is a different act from a standing policy that says yes to every
 approval prompt on the machine, which would defeat the confirmations those
 agents implement on purpose.
 
+### Canned replies
+
+```sh
+sesh-bro reply builder        # send canned reply 1 ("yes" by default)
+sesh-bro reply builder 2      # ...reply 2
+sesh-bro reply --list         # what the canned replies are
+```
+
+`reply` is `prompt` with the typing removed, and it is bound to a key in the
+picker so a human can answer a waiting agent without leaving the list.
+
+It refuses any agent that is not blocked, exiting 3. A canned answer is an
+answer to a question, and an agent that is not blocked is not asking one —
+sending it text mid-turn injects a stray line into whatever it is doing. That
+refusal is what makes a one-keypress reply safe to sit beside the filter keys.
+
+The replies live one per line in `replies.txt` beside the state file, with `#`
+comments allowed. A file rather than an environment variable because a canned
+reply is free text that may contain the colons and commas every list variable
+here splits on.
+
+There is no `--all-blocked` for `reply`, though `prompt` has one. Answering
+every waiting agent at once from muscle memory is the approve-all behaviour
+this project refuses on purpose.
+
 ### Pin the agents you care about
 
 ```sh

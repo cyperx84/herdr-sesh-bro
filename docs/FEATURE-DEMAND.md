@@ -97,6 +97,32 @@ a persistent event listener).
 > The lesson worth keeping: "we would have to keep our own clock" was true, and
 > "therefore we need a daemon" did not follow — the host already had a cheaper hook.
 
+## Refused on purpose — approve-all / auto-yes
+
+Real demand, deliberately unmet. Every "answer whatever it is asking" request
+lands here, and the answer is no.
+
+ccmanager's own documentation states the problem plainly: a blanket auto-yes
+bypasses the confirmation prompts coding agents implement on purpose. Those
+prompts are the last thing standing between an agent and a destructive command
+it half-decided to run, and a policy that answers all of them removes that for
+every agent on the machine at once, including the ones you are not watching.
+
+The distinction sesh-bro draws is between an ANSWER and a POLICY:
+
+- `reply` sends one canned string to one agent you are looking at. It refuses
+  any agent that is not blocked, so it can only ever answer a question that was
+  actually asked. That is a human answering.
+- `prompt --all-blocked` exists for a driving agent, which is deciding what to
+  send with the context to know whether it should be sent, and which had to
+  name the text.
+- There is no key and no flag that says yes to everything. `reply` has no
+  `--all-blocked` for exactly this reason: the picker key is the one a person
+  presses from muscle memory without reading the row.
+
+Recorded here so it is not re-proposed as an obvious convenience. It is an
+obvious convenience. It is still no.
+
 ## Flagged, below the demand bar
 
 `sesh`'s alias system — exact-match short-circuits fuzzy ranking so muscle memory never

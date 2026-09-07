@@ -123,6 +123,7 @@ type Config struct {
 	KeyDirs       string
 	KeyWorktrees  string
 	KeyStar       string
+	KeyReply      string
 	KeyAll        string
 	KeyCreate     string
 	KeyClose      string
@@ -192,6 +193,9 @@ func Load(getenv func(string) string) Config {
 		KeyAgents:          orDefault(getenv("SESH_BRO_KEY_AGENTS"), "ctrl-e"),
 		KeyBlocked:         orDefault(getenv("SESH_BRO_KEY_BLOCKED"), "ctrl-b"),
 		KeyDirs:            orDefault(getenv("SESH_BRO_KEY_DIRS"), "ctrl-x"),
+		KeyWorktrees:       orDefault(getenv("SESH_BRO_KEY_WORKTREES"), "ctrl-t"),
+		KeyStar:            orDefault(getenv("SESH_BRO_KEY_STAR"), "ctrl-s"),
+		KeyReply:           orDefault(getenv("SESH_BRO_KEY_REPLY"), "ctrl-y"),
 		KeyAll:             orDefault(getenv("SESH_BRO_KEY_ALL"), "ctrl-o"),
 		KeyCreate:          orDefault(getenv("SESH_BRO_KEY_CREATE"), "ctrl-/"),
 		KeyClose:           orDefault(getenv("SESH_BRO_KEY_CLOSE"), "alt-x"),
@@ -327,6 +331,7 @@ func (c Config) Keys() picker.KeyBindings {
 		Dirs:       c.KeyDirs,
 		Worktrees:  c.KeyWorktrees,
 		Star:       c.KeyStar,
+		Reply:      c.KeyReply,
 		All:        c.KeyAll,
 		Create:     c.KeyCreate,
 		Close:      c.KeyClose,

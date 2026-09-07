@@ -213,6 +213,7 @@ type KeyBindings struct {
 	Dirs       string // reload: directories only.
 	Worktrees  string // reload: unopened git worktrees only.
 	Star       string // toggle the highlighted agent's pin.
+	Reply      string // send the first canned reply to a blocked agent.
 	All        string // reload: all sources.
 	Create     string // execute-silent create, then reload.
 	// Close is Feature A's new bind (docs/COMPETITIVE-DEMAND.md #1: "Close /
@@ -243,6 +244,7 @@ var DefaultKeyBindings = KeyBindings{
 	Dirs:       "ctrl-x",
 	Worktrees:  "ctrl-t",
 	Star:       "ctrl-s",
+	Reply:      "ctrl-y",
 	All:        "ctrl-o",
 	Create:     "ctrl-/",
 	Close:      "alt-x",
@@ -326,6 +328,7 @@ func (k KeyBindings) resolved() KeyBindings {
 		Dirs:       sanitizeKey(k.Dirs, DefaultKeyBindings.Dirs),
 		Worktrees:  sanitizeKey(k.Worktrees, DefaultKeyBindings.Worktrees),
 		Star:       sanitizeKey(k.Star, DefaultKeyBindings.Star),
+		Reply:      sanitizeKey(k.Reply, DefaultKeyBindings.Reply),
 		All:        sanitizeKey(k.All, DefaultKeyBindings.All),
 		Create:     sanitizeKey(k.Create, DefaultKeyBindings.Create),
 		Close:      sanitizeKey(k.Close, DefaultKeyBindings.Close),
@@ -445,10 +448,10 @@ func BuildArgs(opts Options) []string {
 	// frees the header for the live counts row. Below that version they stay
 	// exactly where they have always been.
 	hints := fmt.Sprintf(
-		"enter connect · %s workspaces · %s agents · %s blocked · %s dirs · %s worktrees · %s all · %s star · %s close · %s create",
+		"enter connect · %s workspaces · %s agents · %s blocked · %s dirs · %s worktrees · %s all · %s star · %s reply · %s close · %s create",
 		keyLabel(keys.Workspaces), keyLabel(keys.Agents), keyLabel(keys.Blocked),
 		keyLabel(keys.Dirs), keyLabel(keys.Worktrees), keyLabel(keys.All),
-		keyLabel(keys.Star), keyLabel(keys.Close), keyLabel(keys.Create),
+		keyLabel(keys.Star), keyLabel(keys.Reply), keyLabel(keys.Close), keyLabel(keys.Create),
 	)
 	if opts.Fzf.Footer {
 		args = append(args, "--footer="+hints)
@@ -529,6 +532,11 @@ func BuildArgs(opts Options) []string {
 		// to confirm and nothing to read — unlike close, a pin is trivially
 		// reversible by pressing the same key again.
 		fmt.Sprintf("--bind=%s:execute-silent(%s star --toggle {2})+%s", keys.Star, selfQ, reloadCurrent(opts, selfQ, hide)),
+		// Reply is execute-silent and needs no confirm because `reply` refuses
+		// any agent that is not blocked: pressed on the wrong row it exits 3
+		// and does nothing. That is what makes a one-keypress answer safe
+		// enough to sit next to the filter keys.
+		fmt.Sprintf("--bind=%s:execute-silent(%s reply {2})+%s", keys.Reply, selfQ, reloadCurrent(opts, selfQ, hide)),
 		viewBind(opts, keys.All, "all", selfQ, hide),
 		fmt.Sprintf("--bind=%s:execute-silent(%s create)+%s", keys.Create, selfQ, reloadCurrent(opts, selfQ, hide)),
 	)

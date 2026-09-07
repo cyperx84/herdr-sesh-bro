@@ -16,7 +16,7 @@ sesh> alpha                                       ▲ 40%
 ● beta   claude · Rename arcade route  [feat/x]   │
 ▸ my-project  /Users/me/github/my-project         │
                                                   ▼
-enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^o all · alt-x close · ^/ create
+enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^t worktrees · ^o all · ^s star · ^y reply · alt-x close · ^/ create
 ```
 
 ## Features
@@ -130,10 +130,31 @@ sesh-bro worktree [URL]  # create/focus the workspace for a GitHub issue/PR
 | `^e` | reload: agents only |
 | `^b` | reload: blocked agents only |
 | `^x` | reload: directories only |
+| `^t` | reload: git worktrees you have not opened |
 | `^o` | reload: all sources |
-| `alt-x` | close the highlighted **workspace** (no-op on agent/dir rows; refuses the current workspace) |
+| `^s` | pin the highlighted agent to the top of its status group |
+| `^y` | send canned reply 1 to the highlighted agent (blocked agents only) |
+| `alt-x` | close the selected **workspaces** (no-op on agent/dir rows; refuses the current workspace) |
 | `^/` | create a new workspace from a directory |
 | `esc` | exit |
+
+The picker is `--multi`: `tab` selects, and `alt-x` closes everything selected
+after showing you the list by label and asking. `enter` on a multi-selection
+connects to the **first** selected row, which is the only sane
+single-destination reading but will surprise anyone with muscle memory from
+other fzf tools.
+
+`^s` pins an agent to the top of **its own status group**, not to the top of
+the list — a pinned idle agent leads the idle ones and still sits below every
+blocked agent, so a pin can never bury something that needs you. Named agents
+are pinned by name and survive their pane being recreated; an unnamed agent is
+pinned by pane id and the pin dies with the pane.
+
+`^y` sends the first canned reply (`yes` out of the box) to the highlighted
+agent, and refuses any agent that is not blocked, so pressing it on the wrong
+row does nothing. Edit the replies one per line in `replies.txt` beside the
+state file. There is no key that answers every blocked agent at once, on
+purpose.
 
 > The keybinds deliberately avoid `^a` (Herdr's prefix) and `^h/j/k/l`
 > (vim-herdr-navigation / tmux pane keys) so they never fight your editor
@@ -326,6 +347,9 @@ schema exposes. Set them in your shell, or via Herdr's config UI:
 | `SESH_BRO_KEY_AGENTS` | `ctrl-e` | Reload: agents only |
 | `SESH_BRO_KEY_BLOCKED` | `ctrl-b` | Reload: blocked agents only |
 | `SESH_BRO_KEY_DIRS` | `ctrl-x` | Reload: directories only |
+| `SESH_BRO_KEY_WORKTREES` | `ctrl-t` | Reload: unopened git worktrees only |
+| `SESH_BRO_KEY_STAR` | `ctrl-s` | Pin the highlighted agent |
+| `SESH_BRO_KEY_REPLY` | `ctrl-y` | Send canned reply 1 to a blocked agent |
 | `SESH_BRO_KEY_ALL` | `ctrl-o` | Reload: all sources |
 | `SESH_BRO_KEY_CLOSE` | `alt-x` | Close the highlighted workspace |
 | `SESH_BRO_KEY_CREATE` | `ctrl-/` | Create a workspace from a directory |

@@ -30,7 +30,7 @@ func TestBuildArgs_Default(t *testing.T) {
 		"--tiebreak=index",
 		"--query=",
 		"--prompt=sesh> ",
-		"--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^t worktrees · ^o all · ^s star · alt-x close · ^/ create",
+		"--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^t worktrees · ^o all · ^s star · ^y reply · alt-x close · ^/ create",
 		"--preview='/opt/sesh-bro/sesh-bro' preview {1} {2}",
 		"--preview-window=right,60%,border-left",
 		"--bind=alt-x:execute('/opt/sesh-bro/sesh-bro' close --from-file {+f})+reload('/opt/sesh-bro/sesh-bro' list --header )",
@@ -39,6 +39,7 @@ func TestBuildArgs_Default(t *testing.T) {
 		"--bind=ctrl-b:reload('/opt/sesh-bro/sesh-bro' list --blocked --header )",
 		"--bind=ctrl-x:reload('/opt/sesh-bro/sesh-bro' list --dirs --header )", "--bind=ctrl-t:reload('/opt/sesh-bro/sesh-bro' list --worktrees --header )",
 		"--bind=ctrl-s:execute-silent('/opt/sesh-bro/sesh-bro' star --toggle {2})+reload('/opt/sesh-bro/sesh-bro' list --header )",
+		"--bind=ctrl-y:execute-silent('/opt/sesh-bro/sesh-bro' reply {2})+reload('/opt/sesh-bro/sesh-bro' list --header )",
 		"--bind=ctrl-o:reload('/opt/sesh-bro/sesh-bro' list --header )",
 		"--bind=ctrl-/:execute-silent('/opt/sesh-bro/sesh-bro' create)+reload('/opt/sesh-bro/sesh-bro' list --header )",
 	}
@@ -198,6 +199,7 @@ func TestKeyBindings_Resolved(t *testing.T) {
 		Dirs:       DefaultKeyBindings.Dirs,
 		Worktrees:  DefaultKeyBindings.Worktrees,
 		Star:       DefaultKeyBindings.Star,
+		Reply:      DefaultKeyBindings.Reply,
 		All:        DefaultKeyBindings.All,
 		Create:     DefaultKeyBindings.Create,
 		Close:      "ctrl-d",
@@ -241,7 +243,7 @@ func TestBuildArgs_KeyOverrides(t *testing.T) {
 			Create: "bad:key", // malformed -> falls back to ctrl-/
 		},
 	})
-	wantHeader := "--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^t worktrees · ^o all · ^s star · ^d close · ^/ create"
+	wantHeader := "--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^t worktrees · ^o all · ^s star · ^y reply · ^d close · ^/ create"
 	wantCloseBind := "--bind=ctrl-d:execute('/bin/sesh-bro' close --from-file {+f})+reload('/bin/sesh-bro' list --header )"
 	wantCreateBind := "--bind=ctrl-/:execute-silent('/bin/sesh-bro' create)+reload('/bin/sesh-bro' list --header )"
 	for _, want := range []string{wantHeader, wantCloseBind, wantCreateBind} {
