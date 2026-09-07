@@ -416,6 +416,11 @@ func BuildArgs(opts Options) []string {
 
 	args := []string{
 		"--ansi",
+		// Multi-select. Enter still connects to one destination (the first
+		// selected row); what --multi adds is the ability to hand several rows
+		// to close and prompt at once, each of which shows what it resolved
+		// before acting.
+		"--multi",
 		// Two literal characters, backslash then 't' — fzf parses this as
 		// a regex matching one TAB byte (BEHAVIOUR.md §3.1 note); it is
 		// NOT a real tab character embedded in the argv.
@@ -496,7 +501,22 @@ func BuildArgs(opts Options) []string {
 		// {1} {2} hand `close` the highlighted row's type and target, exactly
 		// as the --preview bind does. No --multi: highlighted-versus-selected
 		// cannot then diverge for an irreversible action.
-		fmt.Sprintf("--bind=%s:execute-silent(%s close {1} {2})+%s", keys.Close, selfQ, reloadCurrent(opts, selfQ, hide)),
+		// {+f}, not {1} {2}, and execute, not execute-silent. Both matter.
+		//
+		// {+f} writes the SELECTED rows (or the highlighted one when nothing
+		// is selected) to a temp file and substitutes its path, so the command
+		// receives whole TSV lines and resolves types and targets itself — no
+		// argv length limit, no quoting hazard, and under --header-lines the
+		// header is unselectable and never appears.
+		//
+		// execute suspends fzf and hands the child the terminal, which is what
+		// lets close print what it is about to destroy and read y/N. That
+		// confirmation is what makes --multi safe here: the old design avoided
+		// --multi entirely so that "highlighted" and "selected" could not
+		// diverge for an irreversible action. That reasoning was right, and it
+		// is replaced rather than ignored — the ambiguity is now resolved by
+		// showing the user the resolved list before anything happens.
+		fmt.Sprintf("--bind=%s:execute(%s close --from-file {+f})+%s", keys.Close, selfQ, reloadCurrent(opts, selfQ, hide)),
 		viewBind(opts, keys.Workspaces, "workspaces", selfQ, hide),
 		viewBind(opts, keys.Agents, "agents", selfQ, hide),
 		viewBind(opts, keys.Blocked, "blocked", selfQ, hide),
@@ -542,11 +562,38 @@ func cutField(line string, n int) string {
 // is always ok == true, even a single word with no TAB in it at all — see
 // cutField.
 func ParseSelection(raw string) (Selection, bool) {
-	raw = strings.TrimRight(raw, "\n")
-	if raw == "" {
+	sels := ParseSelections(raw)
+	if len(sels) == 0 {
 		return Selection{}, false
 	}
-	return Selection{Kind: cutField(raw, 1), Target: cutField(raw, 2)}, true
+	// Enter on a multi-selection connects to the FIRST row. Connect has one
+	// destination — you cannot focus two workspaces — so any other choice is
+	// arbitrary, and the first is the one the user's cursor reached first.
+	return sels[0], true
+}
+
+// ParseSelections parses every line fzf returned.
+//
+// Splitting on newline BEFORE splitting on tab is the whole correctness
+// argument. With --multi, fzf prints one selected line per line; cutField
+// splits the entire blob on tabs, so a two-line selection yields a "target"
+// spanning both lines — a string that is not any row's target and that every
+// downstream lookup silently fails to match. That bug is invisible in
+// single-selection use, which is every use this function had before --multi.
+func ParseSelections(raw string) []Selection {
+	raw = strings.TrimRight(raw, "\n")
+	if raw == "" {
+		return nil
+	}
+	lines := strings.Split(raw, "\n")
+	out := make([]Selection, 0, len(lines))
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		out = append(out, Selection{Kind: cutField(line, 1), Target: cutField(line, 2)})
+	}
+	return out
 }
 
 // waitForKeypress is the default PressAnyKey: open /dev/tty and read one

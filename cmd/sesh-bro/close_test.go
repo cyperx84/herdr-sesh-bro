@@ -3,7 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/cyperx84/herdr-sesh-bro/internal/herdrx/herdrtest"
+	"github.com/cyperx84/herdr-sesh-bro/internal/output"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -118,5 +124,102 @@ func TestCloseWorkspaceRow_OpenErrPassesThrough(t *testing.T) {
 	want := "sesh-bro: failed to close workspace w49\n"
 	if stderr.String() != want {
 		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	}
+}
+
+// writeRowsFile writes a TSV rows file of the shape fzf's {+f} produces.
+func writeRowsFile(t *testing.T, lines ...string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "rows.tsv")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// An irreversible action with nobody to ask is exactly when to stop. Without
+// a terminal to confirm on, close must refuse rather than assume yes — an
+// agent or a script that meant it says --yes.
+func TestCloseFromFileRefusesWithoutATerminal(t *testing.T) {
+	s := herdrtest.Start(t)
+	s.Handle("workspace.list", func(json.RawMessage) (any, error) {
+		return map[string]any{"workspaces": []map[string]any{}}, nil
+	})
+	s.Handle("workspace.close", func(json.RawMessage) (any, error) { return map[string]any{}, nil })
+
+	rows := writeRowsFile(t, "workspace\tw1\t◆ alpha")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"close", "--from-file", rows}, strings.NewReader(""), &stdout, &stderr, fakeEnv(fakeHerdrEnv(s)))
+
+	if len(s.Calls("workspace.close")) != 0 {
+		t.Error("closed a workspace with no confirmation and no --yes")
+	}
+	if code != 0 {
+		t.Errorf("code = %d; declining to close is not a failure", code)
+	}
+	if !strings.Contains(stderr.String(), "--yes") {
+		t.Errorf("stderr does not tell the caller how to proceed: %q", stderr.String())
+	}
+}
+
+// --yes is how a caller states the intent explicitly. Bulk close then works.
+func TestCloseFromFileWithYesClosesEvery(t *testing.T) {
+	s := herdrtest.Start(t)
+	s.Handle("workspace.list", func(json.RawMessage) (any, error) {
+		return map[string]any{"workspaces": []map[string]any{}}, nil
+	})
+	s.Handle("workspace.close", func(json.RawMessage) (any, error) { return map[string]any{}, nil })
+
+	rows := writeRowsFile(t, "workspace\tw1\t◆ alpha", "workspace\tw2\t◆ beta")
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"close", "--from-file", rows, "--yes"}, strings.NewReader(""), &stdout, &stderr, fakeEnv(fakeHerdrEnv(s))); code != 0 {
+		t.Fatalf("code = %d (stderr %q)", code, stderr.String())
+	}
+	if n := len(s.Calls("workspace.close")); n != 2 {
+		t.Errorf("closed %d workspaces, want 2", n)
+	}
+}
+
+// A user who selected an agent alongside a workspace and saw only "closed 1"
+// could reasonably conclude the agent was closed too. Say what was skipped.
+func TestCloseFromFileReportsSkippedRows(t *testing.T) {
+	s := herdrtest.Start(t)
+	s.Handle("workspace.list", func(json.RawMessage) (any, error) {
+		return map[string]any{"workspaces": []map[string]any{}}, nil
+	})
+	s.Handle("workspace.close", func(json.RawMessage) (any, error) { return map[string]any{}, nil })
+
+	rows := writeRowsFile(t,
+		"header\t-\t● 1 blocked",
+		"agent\tbuilder\t● builder",
+		"dir\t/tmp/x\t▸ x",
+		"workspace\tw1\t◆ alpha")
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"close", "--from-file", rows, "--yes"}, strings.NewReader(""), &stdout, &stderr, fakeEnv(fakeHerdrEnv(s))); code != 0 {
+		t.Fatalf("code = %d (stderr %q)", code, stderr.String())
+	}
+	if n := len(s.Calls("workspace.close")); n != 1 {
+		t.Errorf("closed %d, want only the one workspace row", n)
+	}
+	for _, want := range []string{"agent builder", "dir /tmp/x"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr does not report skipping %q: %q", want, stderr.String())
+		}
+	}
+	// The pinned counts row is chrome and unselectable; mentioning it would be
+	// noise about something the user cannot have chosen.
+	if strings.Contains(stderr.String(), "header") {
+		t.Errorf("reported the header row as skipped: %q", stderr.String())
+	}
+}
+
+// Selecting only non-workspace rows is a real answer, not a fault: nothing
+// closeable was chosen.
+func TestCloseFromFileWithNoWorkspaceRows(t *testing.T) {
+	s := herdrtest.Start(t)
+	rows := writeRowsFile(t, "agent\tbuilder\t● builder")
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"close", "--from-file", rows, "--yes"}, strings.NewReader(""), &stdout, &stderr, fakeEnv(fakeHerdrEnv(s))); code != output.ExitEmpty {
+		t.Errorf("code = %d, want %d (ExitEmpty)", code, output.ExitEmpty)
 	}
 }

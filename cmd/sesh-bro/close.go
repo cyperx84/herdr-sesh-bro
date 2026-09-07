@@ -13,14 +13,39 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"github.com/cyperx84/herdr-sesh-bro/internal/output"
+	"github.com/cyperx84/herdr-sesh-bro/internal/render"
 	"os"
+	"strings"
 
 	"github.com/cyperx84/herdr-sesh-bro/internal/herdrx"
 )
 
 func cmdClose(ctx context.Context, env *appEnv, args []string) int {
+	// --from-file is how the picker hands over a multi-selection: fzf's {+f}
+	// writes the chosen rows to a temp file. It is a separate path rather than
+	// more positional arguments because closing several workspaces has to
+	// confirm first, and confirming needs the whole set up front.
+	if len(args) >= 1 && args[0] == "--from-file" {
+		if len(args) < 2 {
+			fmt.Fprintln(env.stderr, "sesh-bro: close: --from-file needs a path")
+			return output.ExitUsage
+		}
+		assumeYes := false
+		for _, a := range args[2:] {
+			if a == "--yes" {
+				assumeYes = true
+				continue
+			}
+			fmt.Fprintf(env.stderr, "sesh-bro: close: unknown flag %s\n", a)
+			return output.ExitUsage
+		}
+		return closeFromFile(ctx, env, args[1], assumeYes)
+	}
+
 	// Mirrors cmd_connect's TYPE/TARGET contract (connect.go, BEHAVIOUR.md
 	// §9 S9), not because bash's `close` ever existed to be unbound under
 	// `set -u`, but because close is the same shape of command — fzf drives
@@ -137,4 +162,105 @@ func focusedWorkspaceID(ctx context.Context, client *herdrx.Client) (string, err
 		}
 	}
 	return "", nil
+}
+
+// closeFromFile closes every workspace named in a TSV rows file, after showing
+// the user exactly what it resolved.
+//
+// The confirmation is not politeness, it is the argument for allowing
+// multi-select at all. The picker previously refused --multi so that
+// "highlighted" and "selected" could never diverge for an irreversible action,
+// which was sound: a user who selected three rows and then moved the cursor
+// would otherwise have no way to know which set was about to be destroyed.
+// Printing the resolved list before touching anything removes the ambiguity
+// instead of avoiding it — you cannot be surprised by a set you just read.
+//
+// Non-workspace rows are reported, never silently dropped. A user who selected
+// an agent and a workspace and saw only "closed 1 workspace" would reasonably
+// conclude the agent had been closed too.
+func closeFromFile(ctx context.Context, env *appEnv, path string, assumeYes bool) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(env.stderr, "sesh-bro: close: %v\n", err)
+		return output.ExitFailure
+	}
+
+	var targets []string
+	var skipped []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 {
+			continue
+		}
+		kind, target := fields[0], fields[1]
+		// The pinned counts row is chrome, not a candidate; fzf's
+		// --header-lines keeps it unselectable, so seeing one here would mean
+		// something upstream changed, and closing it would be nonsense.
+		if kind == render.HeaderRowKind {
+			continue
+		}
+		if kind != string(render.KindWorkspace) {
+			skipped = append(skipped, kind+" "+target)
+			continue
+		}
+		targets = append(targets, target)
+	}
+
+	for _, s := range skipped {
+		fmt.Fprintf(env.stderr, "sesh-bro: close: skipping %s (only workspaces can be closed)\n", s)
+	}
+	if len(targets) == 0 {
+		fmt.Fprintln(env.stderr, "sesh-bro: close: no workspace rows selected")
+		return output.ExitEmpty
+	}
+
+	if !assumeYes {
+		if !confirmClose(env, targets) {
+			fmt.Fprintln(env.stderr, "sesh-bro: close: cancelled")
+			return output.ExitOK
+		}
+	}
+
+	client, openErr := openHerdr(env.getenv)
+	failed := 0
+	for _, target := range targets {
+		if err := closeRow(ctx, env, client, openErr, string(render.KindWorkspace), target); err != nil {
+			failed++
+		}
+	}
+	if failed > 0 {
+		return output.ExitFailure
+	}
+	return output.ExitOK
+}
+
+// confirmClose prints what is about to be destroyed and reads y/N from the
+// terminal.
+//
+// It reads /dev/tty rather than stdin because fzf's `execute` hands the child
+// the terminal while stdin may still be the row stream — asking on stdin would
+// consume rows and never see the user. When there is no tty at all (a script,
+// an agent) it refuses rather than assuming yes: an irreversible action with
+// no one to ask is exactly when to stop, and --yes exists to say otherwise.
+func confirmClose(env *appEnv, targets []string) bool {
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		fmt.Fprintln(env.stderr, "sesh-bro: close: no terminal to confirm on; pass --yes to close without confirming")
+		return false
+	}
+	defer tty.Close()
+
+	fmt.Fprintf(tty, "Close %d workspace(s) and every agent in them?\n", len(targets))
+	for _, t := range targets {
+		fmt.Fprintf(tty, "  %s\n", t)
+	}
+	fmt.Fprint(tty, "This cannot be undone. [y/N] ")
+
+	reader := bufio.NewReader(tty)
+	answer, _ := reader.ReadString('\n')
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	return answer == "y" || answer == "yes"
 }

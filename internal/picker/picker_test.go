@@ -23,6 +23,7 @@ func TestBuildArgs_Default(t *testing.T) {
 	})
 	want := []string{
 		"--ansi",
+		"--multi",
 		`--delimiter=\t`,
 		"--with-nth=3..",
 		"--layout=reverse",
@@ -32,7 +33,7 @@ func TestBuildArgs_Default(t *testing.T) {
 		"--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^t worktrees · ^o all · alt-x close · ^/ create",
 		"--preview='/opt/sesh-bro/sesh-bro' preview {1} {2}",
 		"--preview-window=right,60%,border-left",
-		"--bind=alt-x:execute-silent('/opt/sesh-bro/sesh-bro' close {1} {2})+reload('/opt/sesh-bro/sesh-bro' list --header )",
+		"--bind=alt-x:execute('/opt/sesh-bro/sesh-bro' close --from-file {+f})+reload('/opt/sesh-bro/sesh-bro' list --header )",
 		"--bind=ctrl-w:reload('/opt/sesh-bro/sesh-bro' list --workspaces --header )",
 		"--bind=ctrl-e:reload('/opt/sesh-bro/sesh-bro' list --agents --header )",
 		"--bind=ctrl-b:reload('/opt/sesh-bro/sesh-bro' list --blocked --header )",
@@ -56,7 +57,7 @@ func TestBuildArgs_HideCurrent(t *testing.T) {
 		"--bind=ctrl-b:reload('/bin/sesh-bro' list --blocked --header --hide-current)",
 		"--bind=ctrl-x:reload('/bin/sesh-bro' list --dirs --header --hide-current)",
 		"--bind=ctrl-o:reload('/bin/sesh-bro' list --header --hide-current)",
-		"--bind=alt-x:execute-silent('/bin/sesh-bro' close {1} {2})+reload('/bin/sesh-bro' list --header --hide-current)",
+		"--bind=alt-x:execute('/bin/sesh-bro' close --from-file {+f})+reload('/bin/sesh-bro' list --header --hide-current)",
 		"--bind=ctrl-/:execute-silent('/bin/sesh-bro' create)+reload('/bin/sesh-bro' list --header --hide-current)",
 	}
 	for _, want := range wantBinds {
@@ -239,7 +240,7 @@ func TestBuildArgs_KeyOverrides(t *testing.T) {
 		},
 	})
 	wantHeader := "--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^t worktrees · ^o all · ^d close · ^/ create"
-	wantCloseBind := "--bind=ctrl-d:execute-silent('/bin/sesh-bro' close {1} {2})+reload('/bin/sesh-bro' list --header )"
+	wantCloseBind := "--bind=ctrl-d:execute('/bin/sesh-bro' close --from-file {+f})+reload('/bin/sesh-bro' list --header )"
 	wantCreateBind := "--bind=ctrl-/:execute-silent('/bin/sesh-bro' create)+reload('/bin/sesh-bro' list --header )"
 	for _, want := range []string{wantHeader, wantCloseBind, wantCreateBind} {
 		found := false
@@ -446,7 +447,7 @@ func TestCloseBindIsEmittedBeforeNavigationBinds(t *testing.T) {
 
 	closeAt, navAt := -1, -1
 	for i, a := range args {
-		if strings.Contains(a, " close {1} {2}") {
+		if strings.Contains(a, " close --from-file") {
 			closeAt = i
 		}
 		if navAt == -1 && strings.Contains(a, "list --workspaces") {
@@ -589,5 +590,53 @@ func TestBuildArgs_OldFzfDegradesCleanly(t *testing.T) {
 	}
 	if !strings.Contains(joined, "--header=enter connect") {
 		t.Errorf("hints did not fall back to the header: %v", got)
+	}
+}
+
+// With --multi, fzf prints one line per selected row. cutField splits on tabs
+// across whatever it is given, so parsing the blob as one line yields a target
+// spanning two rows — a string matching no row, which every downstream lookup
+// then fails to find without saying why. Invisible before --multi existed,
+// which is exactly why it needs a test now.
+func TestParseSelectionsHandlesMultipleLines(t *testing.T) {
+	raw := "workspace\tw1\t◆ alpha\nagent\tbuilder\t● builder\ndir\t/tmp/x\t▸ x\n"
+	got := ParseSelections(raw)
+	if len(got) != 3 {
+		t.Fatalf("got %d selections, want 3: %+v", len(got), got)
+	}
+	for i, want := range []Selection{
+		{Kind: "workspace", Target: "w1"},
+		{Kind: "agent", Target: "builder"},
+		{Kind: "dir", Target: "/tmp/x"},
+	} {
+		if got[i] != want {
+			t.Errorf("selection %d = %+v, want %+v", i, got[i], want)
+		}
+	}
+}
+
+// Enter on a multi-selection connects to the first row: connect has exactly
+// one destination, so anything else would be an arbitrary pick.
+func TestParseSelectionTakesTheFirstOfMany(t *testing.T) {
+	sel, ok := ParseSelection("agent\tfirst\t● one\nagent\tsecond\t● two\n")
+	if !ok {
+		t.Fatal("ok = false for a multi-line selection")
+	}
+	if sel.Target != "first" {
+		t.Errorf("target = %q, want the first row's target", sel.Target)
+	}
+}
+
+// The single-line contract is unchanged — every pre-0.6.0 caller depends on it.
+func TestParseSelectionSingleLineUnchanged(t *testing.T) {
+	sel, ok := ParseSelection("workspace\tw49\t◆ ORG\n")
+	if !ok || sel.Kind != "workspace" || sel.Target != "w49" {
+		t.Errorf("ParseSelection = %+v ok=%v", sel, ok)
+	}
+	if _, ok := ParseSelection(""); ok {
+		t.Error("empty input reported a selection")
+	}
+	if _, ok := ParseSelection("\n\n"); ok {
+		t.Error("blank lines reported a selection")
 	}
 }
