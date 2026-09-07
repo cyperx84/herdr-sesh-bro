@@ -62,41 +62,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 		stderr:   stderr,
 	}
 
+	if spec, ok := lookupCommand(cmd); ok {
+		return spec.Run(ctx, env, args)
+	}
+
 	switch cmd {
-	case "picker":
-		return cmdPicker(ctx, env, args)
-	case "list":
-		return cmdList(ctx, env, args)
-	case "counts":
-		return cmdCounts(ctx, env, args)
-	case "rows":
-		return cmdRows(env, args)
-	case "record-event":
-		return cmdRecordEvent(ctx, env)
-	case "next":
-		return cmdNext(ctx, env, args, 1)
-	case "prev":
-		return cmdNext(ctx, env, args, -1)
-	case "connect":
-		return cmdConnect(ctx, env, args)
-	case "close":
-		// docs/COMPETITIVE-DEMAND.md #1 — no bash counterpart; see
-		// close.go's doc comment for why this sits next to connect.
-		return cmdClose(ctx, env, args)
-	case "create":
-		return cmdCreate(ctx, env, args)
-	case "preview":
-		return cmdPreview(ctx, env, args)
-	case "open":
-		return cmdOpen(env, args)
-	case "startup":
-		return cmdStartup(ctx, env)
-	case "last":
-		return cmdLast(ctx, env)
-	case "root":
-		return cmdRoot(ctx, env)
-	case "worktree":
-		return cmdWorktree(ctx, env, args)
 	case "-h", "--help", "help":
 		// BEHAVIOUR.md §2.0: usage on STDOUT, exit 0.
 		fmt.Fprint(stdout, usage(version))
@@ -231,27 +201,9 @@ func resolvePWD(env *appEnv) string {
 func usage(version string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "sesh-bro %s — sesh-style fuzzy session picker for Herdr\n\n", version)
-	b.WriteString(`usage: sesh-bro <command> [flags]
-
-commands:
-  picker [flags]     open the fzf picker (default)
-  list   [flags]     print picker candidates (type, target, display)
-  next               focus the next agent needing attention (blocked, then done)
-  prev               same, backwards
-  counts [flags]     one line: how many agents are blocked/working/done/idle
-                     (--ansi colour, --json, --all to include zeros)
-  connect TYPE TARGET
-                     focus a workspace/agent, or create a workspace for a dir
-  close TYPE TARGET  close a workspace (workspace rows only; picker alt-x)
-  create [PATH]      create a workspace for a directory (default: current dir)
-  preview TYPE TARGET
-                     render the preview used by the picker
-  open   [flags]     open the picker popup through the Herdr plugin API
-  startup            validate deps + clear stale cache (manifest startup hook)
-  last               focus the previously-focused workspace
-  root               focus/create the workspace for the current git root
-  worktree [URL]     create/focus the workspace for a GitHub issue/PR
-  -h, --help         show this help
+	b.WriteString("usage: sesh-bro <command> [flags]\n\ncommands:\n")
+	b.WriteString(commandLines())
+	b.WriteString(`  -h, --help         show this help
   -v, --version      print the version
 
 flags:

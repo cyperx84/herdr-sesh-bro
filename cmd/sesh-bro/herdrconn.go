@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"os/exec"
 
 	"github.com/cyperx84/herdr-sesh-bro/internal/external"
 	"github.com/cyperx84/herdr-sesh-bro/internal/herdrx"
@@ -57,7 +58,47 @@ func openHerdr(getenv func(string) string) (*herdrx.Client, error) {
 	if path := getenv("HERDR_SOCKET_PATH"); path != "" {
 		return herdrx.OpenPath(path)
 	}
-	return herdrx.Open()
+
+	// No socket in the environment. herdr only injects HERDR_SOCKET_PATH into
+	// panes it spawned, so this is every invocation from an ordinary shell —
+	// which, since 0.5.0, includes another coding agent driving sesh-bro
+	// headlessly. Before this fallback such a command failed before it did
+	// anything, with an error about a variable the caller had never heard of.
+	//
+	// `herdr session list --json` is the only correct enumeration (see
+	// docs/MULTI-SESSION.md), and DefaultRunningSocket refuses to guess when
+	// several sessions are running and none is default.
+	if sessions, err := listSessions(context.Background(), sessionRunner(getenv)); err == nil {
+		if socket, ok := herdrx.DefaultRunningSocket(sessions); ok {
+			return herdrx.OpenPath(socket)
+		}
+	}
+
+	// Nothing in the environment, nothing discoverable. Report it through the
+	// same path as any other bad socket rather than calling herdrx.Open(),
+	// which reads os.Getenv directly and would therefore consult the REAL
+	// process environment — defeating the getenv seam this function exists to
+	// honour, and making the outcome depend on whether the binary happens to
+	// be running inside a herdr pane.
+	return herdrx.OpenPath("")
+}
+
+// listSessions and sessionRunner are seams: tests point them at canned output
+// so no herdr binary is required, and so a test never shells out at all.
+var listSessions = func(ctx context.Context, run herdrx.Runner) ([]herdrx.Session, error) {
+	return herdrx.ListSessions(ctx, "", run)
+}
+
+// sessionRunner resolves the herdr binary the same way every other call site
+// does, honouring HERDR_BIN_PATH.
+func sessionRunner(getenv func(string) string) herdrx.Runner {
+	bin := getenv("HERDR_BIN_PATH")
+	if bin == "" {
+		return nil // ListSessions defaults to "herdr" on PATH
+	}
+	return func(ctx context.Context, _ string, args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, bin, args...).Output()
+	}
 }
 
 // aliverFor adapts (client, openErr) into an external.Aliver: the real
