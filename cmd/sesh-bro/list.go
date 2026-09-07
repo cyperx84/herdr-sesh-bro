@@ -243,12 +243,17 @@ func refreshSources(ctx context.Context, env *appEnv, cfg config.Config, flags l
 		if err != nil {
 			return listSources{}, err
 		}
-		if dirSources && external.ZoxideAvailable() {
-			if prev != nil && prev.zoxide != nil {
-				src.zoxide = prev.zoxide
-			} else {
-				src.zoxide = external.ZoxideList(ctx)
-			}
+		switch {
+		case !dirSources:
+			// Directories are off; nothing to carry or fetch.
+		case prev != nil && prev.zoxide != nil:
+			// Reuse BEFORE probing. Whether zoxide is on PATH cannot change
+			// under an open picker, so re-running the lookup per event is
+			// itself the waste this function exists to remove — and gating
+			// reuse behind the probe made the reuse machine-dependent.
+			src.zoxide = prev.zoxide
+		case external.ZoxideAvailable():
+			src.zoxide = external.ZoxideList(ctx)
 		}
 	}
 
