@@ -9,6 +9,7 @@ import (
 	herdr "github.com/cyperx84/herdr-api"
 
 	"github.com/cyperx84/herdr-sesh-bro/internal/herdrx/herdrtest"
+	"github.com/cyperx84/herdr-sesh-bro/internal/output"
 )
 
 // nextFixture registers everything `next` calls: the liveness probe, the
@@ -111,15 +112,18 @@ func TestNextToastsBeforeFocusing(t *testing.T) {
 	}
 }
 
-// Nothing waiting is a success with an explicit message, not silence: a key
-// that does nothing visible is indistinguishable from a broken keybinding.
+// Nothing waiting still announces itself — a key that does nothing visible is
+// indistinguishable from a broken keybinding — but the EXIT CODE says
+// "nothing", not "fine". A caller must be able to tell an empty queue from a
+// successful jump without parsing the toast, which is what output.ExitEmpty
+// is for; a human on a keybinding never sees an exit code either way.
 func TestNextWithNothingWaiting(t *testing.T) {
 	s := nextFixture(t, "w1:p9", []herdrtest.SnapshotFixtureAgent{
 		fixtureAgent("calm", "w1:p1", herdr.StatusIdle, 90),
 	})
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"next"}, strings.NewReader(""), &stdout, &stderr, fakeEnv(fakeHerdrEnv(s))); code != 0 {
-		t.Fatalf("code = %d, want 0", code)
+	if code := run([]string{"next"}, strings.NewReader(""), &stdout, &stderr, fakeEnv(fakeHerdrEnv(s))); code != output.ExitEmpty {
+		t.Fatalf("code = %d, want %d (ExitEmpty)", code, output.ExitEmpty)
 	}
 	if len(s.Calls("agent.focus")) != 0 {
 		t.Error("focused something with nothing waiting")
@@ -149,5 +153,37 @@ func TestNextRejectsArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"next", "extra"}, strings.NewReader(""), &stdout, &stderr, fakeEnv(fakeHerdrEnv(s))); code != 2 {
 		t.Errorf("code = %d, want 2", code)
+	}
+}
+
+// --dry-run answers "where would you send me" without sending anyone. A
+// surveying caller needs this because focusing a `done` agent marks it seen
+// and turns it idle — so a survey that focused would quietly destroy the very
+// signal it was surveying.
+func TestNextDryRunDoesNotFocus(t *testing.T) {
+	s := nextFixture(t, "w1:p9", []herdrtest.SnapshotFixtureAgent{
+		fixtureAgent("stuck", "w1:p2", herdr.StatusBlocked, 10),
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"next", "--dry-run", "--json"}, strings.NewReader(""), &stdout, &stderr, fakeEnv(fakeHerdrEnv(s)))
+	if code != output.ExitOK {
+		t.Fatalf("code = %d, want 0 (stderr %q)", code, stderr.String())
+	}
+	if n := len(s.Calls("agent.focus")); n != 0 {
+		t.Errorf("--dry-run focused %d times; it must not move anyone", n)
+	}
+	if !strings.Contains(stdout.String(), "w1:p2") {
+		t.Errorf("--dry-run did not report the target it would pick: %q", stdout.String())
+	}
+}
+
+// An unknown flag is the caller's mistake, and retrying it unchanged cannot
+// help — so it is exit 2, distinct from a runtime failure.
+func TestNextRejectsUnknownFlags(t *testing.T) {
+	s := nextFixture(t, "", nil)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"next", "--nope"}, strings.NewReader(""), &stdout, &stderr, fakeEnv(fakeHerdrEnv(s))); code != output.ExitUsage {
+		t.Errorf("code = %d, want %d (ExitUsage)", code, output.ExitUsage)
 	}
 }

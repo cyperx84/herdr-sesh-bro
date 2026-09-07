@@ -71,6 +71,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 		// BEHAVIOUR.md §2.0: usage on STDOUT, exit 0.
 		fmt.Fprint(stdout, usage(version))
 		return 0
+	case "--skill":
+		// Agent-facing documentation, the counterpart to --help. Named after
+		// herdr's own --skill so an agent that knows one knows the other.
+		return cmdSkill(env)
 	case "-v", "--version":
 		fmt.Fprintf(stdout, "sesh-bro %s\n", version)
 		return 0
@@ -204,6 +208,7 @@ func usage(version string) string {
 	b.WriteString("usage: sesh-bro <command> [flags]\n\ncommands:\n")
 	b.WriteString(commandLines())
 	b.WriteString(`  -h, --help         show this help
+      --skill        agent-facing docs: commands, exit codes, output shapes
   -v, --version      print the version
 
 flags:

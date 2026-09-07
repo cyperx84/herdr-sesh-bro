@@ -19,14 +19,28 @@ import (
 
 	"github.com/cyperx84/herdr-sesh-bro/internal/external"
 	"github.com/cyperx84/herdr-sesh-bro/internal/herdrx"
+	"github.com/cyperx84/herdr-sesh-bro/internal/output"
 )
 
 // cmdNext focuses the next (dir +1) or previous (dir -1) agent needing
 // attention.
 func cmdNext(ctx context.Context, env *appEnv, args []string, dir int) int {
-	if len(args) > 0 {
-		fmt.Fprintf(env.stderr, "sesh-bro: %s takes no arguments\n", dirName(dir))
-		return 2
+	var asJSON, dryRun bool
+	for _, a := range args {
+		switch a {
+		case "--json":
+			asJSON = true
+		case "--dry-run":
+			// Report where it WOULD go without going. A driving agent
+			// surveying the queue must be able to ask without moving the
+			// human's focus, and focusing a `done` agent marks it seen —
+			// so a survey that focused would quietly destroy the signal it
+			// was surveying.
+			dryRun = true
+		default:
+			fmt.Fprintf(env.stderr, "sesh-bro: %s: unknown flag %s\n", dirName(dir), a)
+			return 2
+		}
 	}
 
 	client, openErr := openHerdr(env.getenv)
@@ -43,10 +57,29 @@ func cmdNext(ctx context.Context, env *appEnv, args []string, dir int) int {
 	set := herdrx.AttentionSet(snap.Agents)
 	target, remaining, ok := herdrx.NextAttention(set, snap.FocusedPane(), dir)
 	if !ok {
-		// Saying nothing would be indistinguishable from a broken keybinding.
-		// This is a success: there is genuinely nothing waiting on you.
-		announce(ctx, env, client, openErr, "nothing needs you", "")
-		return 0
+		// Nothing is waiting. For a human on a keybinding that is a success
+		// worth announcing — silence is indistinguishable from a broken bind.
+		// For a caller it is output.ExitEmpty: the command ran correctly and
+		// the answer is "nobody", which is information rather than a fault.
+		if asJSON {
+			_ = output.Emit(env.stdout, output.Empty(dirName(dir)))
+		} else {
+			announce(ctx, env, client, openErr, "nothing needs you", "")
+		}
+		return output.ExitEmpty
+	}
+
+	if dryRun {
+		if asJSON {
+			_ = output.Emit(env.stdout, output.Success(dirName(dir), map[string]any{
+				"pane_id":   target.PaneID,
+				"status":    string(target.Status),
+				"remaining": remaining,
+			}))
+		} else {
+			fmt.Fprintf(env.stdout, "%s\t%s\n", target.PaneID, target.Status)
+		}
+		return output.ExitOK
 	}
 
 	title, body := attentionMessage(target, remaining)
@@ -59,9 +92,19 @@ func cmdNext(ctx context.Context, env *appEnv, args []string, dir int) int {
 	// switches workspace, tab and pane in one call.
 	if err := focusAgent(ctx, client, openErr, target.PaneID); err != nil {
 		fmt.Fprintf(env.stderr, "sesh-bro: failed to focus agent %s\n", target.PaneID)
-		return 1
+		if asJSON {
+			_ = output.Emit(env.stdout, output.Failure(dirName(dir), err))
+		}
+		return output.ExitFailure
 	}
-	return 0
+	if asJSON {
+		_ = output.Emit(env.stdout, output.Success(dirName(dir), map[string]any{
+			"pane_id":   target.PaneID,
+			"status":    string(target.Status),
+			"remaining": remaining,
+		}))
+	}
+	return output.ExitOK
 }
 
 // attentionMessage is the toast a jump announces: what you are being taken to,
