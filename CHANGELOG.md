@@ -5,6 +5,44 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **The live picker stopped paying for itself.** Opening it read the session
+  twice and every herdr event re-ran the whole source load — a fresh git cache
+  (so `git status` per workspace cwd), a zoxide subprocess, and a liveness
+  probe, for data a pane changing state cannot have touched. It now reads once
+  at open and reuses what an event cannot invalidate. The git cache still
+  expires after 5s; the zoxide list does not, because a directory ranking that
+  shifts mid-picker is noise rather than news.
+- `startup` reports the fzf version and which live features that build
+  supports. It lands in `herdr plugin log list`, which is where someone asking
+  "why isn't my picker updating?" actually looks.
+- A re-render prefers the daemon's live focus over `HERDR_WORKSPACE_ID`, which
+  is captured once when the popup spawns. A picker left open while you moved
+  around kept sorting the launch workspace first while the `· current` label
+  followed you. One-shot `list` keeps the env var.
+
+### Fixed
+- **Runtime directories leaked.** The cleanup only ran on a normal return, so
+  herdr tearing down the popup — or any kill — left the socket and row files
+  behind, and nothing ever swept them. There is now a signal handler plus a
+  sweep of dead siblings, which believes a dead pid only after a minute because
+  pids are recycled.
+- **A lost-update race in the recorded state.** `Load` was unlocked while
+  `Save` locked only the write, so two event hooks could both read, both write,
+  and lose one change while both writes reported success. `attention.Update`
+  holds the lock across the whole read-modify-write.
+- Recorded panes are pruned at startup. Nothing removed them before — the hook
+  only ever adds — so the file grew an entry for every pane the machine had
+  ever run an agent in.
+- The first render no longer pushes to fzf's listen socket before fzf has
+  created it. That push always failed and was always swallowed.
+
+### Added
+- `docs/MULTI-SESSION.md` — why cross-session focus is structurally impossible,
+  and what a picker can do instead.
+
 ## [0.4.0] - 2026-09-07
 
 ### Added
