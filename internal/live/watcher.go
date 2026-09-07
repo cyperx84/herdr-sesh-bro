@@ -3,8 +3,6 @@ package live
 import (
 	"context"
 	"time"
-
-	herdr "github.com/cyperx84/herdr-api"
 )
 
 // Defaults for the two timings that shape how a live picker feels.
@@ -54,10 +52,13 @@ func (w *Watcher) Run(ctx context.Context, client subscriber, initialPanes []str
 	if debounce <= 0 {
 		debounce = DefaultDebounce
 	}
+	// Any non-positive value means "use the default" — the previous form
+	// spelled that as two branches whose second condition was always true
+	// when the first was, which read as if disabling the window were possible.
+	// It is not, deliberately: replayed history is indistinguishable from news
+	// at this layer, and acting on it is the one thing this window prevents.
 	grace := w.ReplayGrace
-	if grace < 0 {
-		grace = DefaultReplayGrace
-	} else if grace == 0 && w.ReplayGrace == 0 {
+	if grace <= 0 {
 		grace = DefaultReplayGrace
 	}
 	now := w.Now
@@ -128,16 +129,4 @@ func (w *Watcher) Run(ctx context.Context, client subscriber, initialPanes []str
 			}
 		}
 	}
-}
-
-// AgentPanesOf is a small helper for callers assembling the initial watch set
-// from a snapshot's agents.
-func AgentPanesOf(agents []herdr.Agent) []string {
-	out := make([]string, 0, len(agents))
-	for _, a := range agents {
-		if a.PaneID != "" {
-			out = append(out, a.PaneID)
-		}
-	}
-	return out
 }

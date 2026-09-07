@@ -126,6 +126,7 @@ type listSources struct {
 	hide    string // workspace id to omit, "" to omit nothing
 	zoxide  []string
 	git     *external.GitCache
+	gitAt   time.Time
 	// state is what the [[events]] hook recorded: when each agent entered
 	// its status, for the time-in-state badges. Empty when nothing has been
 	// recorded yet, which costs badges and nothing else.
@@ -140,11 +141,40 @@ type listSources struct {
 // an error only for a run that actually wants directories; evaluating it
 // unconditionally here would newly break `list --agents` on a machine with a
 // typo in that variable.
-func loadSources(ctx context.Context, env *appEnv, cfg config.Config, flags listFlags) (listSources, error) {
+// checkListDeps is the daemon-reachability gate `list` runs before reading
+// anything (BEHAVIOUR.md §7.1). It is hoisted out of loadSources because the
+// live picker re-reads sources on every herdr event, and re-proving the daemon
+// is alive — which costs its own workspace.list round trip — is pointless when
+// an event just arrived FROM that daemon.
+func checkListDeps(ctx context.Context, env *appEnv) error {
 	client, openErr := openHerdr(env.getenv)
-	if err := external.CheckListDeps(ctx, env.herdrBin, aliverFor(client, openErr)); err != nil {
+	return external.CheckListDeps(ctx, env.herdrBin, aliverFor(client, openErr))
+}
+
+// loadSources performs the gate and then the reads. One-shot commands want
+// both; the live picker calls the gate once at open and refreshSources
+// thereafter.
+func loadSources(ctx context.Context, env *appEnv, cfg config.Config, flags listFlags) (listSources, error) {
+	if err := checkListDeps(ctx, env); err != nil {
 		return listSources{}, err
 	}
+	return refreshSources(ctx, env, cfg, flags, nil)
+}
+
+// refreshSources re-reads what a render needs, reusing anything from prev that
+// a herdr event cannot have invalidated.
+//
+// This exists because the live picker's cost per event was quietly awful: a
+// fresh GitCache meant `git status` PER WORKSPACE CWD on every debounced
+// event, plus a zoxide subprocess, plus a liveness round trip — for zoxide and
+// git data that a pane changing state cannot possibly have changed. Passing
+// the previous sources in turns those into cache hits.
+//
+// The git cache still expires, because a branch really can change under a long
+// open picker; zoxide's list does not, because a directory ranking that shifts
+// mid-picker is noise, not news.
+func refreshSources(ctx context.Context, env *appEnv, cfg config.Config, flags listFlags, prev *listSources) (listSources, error) {
+	client, openErr := openHerdr(env.getenv)
 
 	// One call replaces workspace.list + agent.list + pane.list twice, and
 	// with them the pane cache whose TTL bucket meant it almost never hit
@@ -154,9 +184,30 @@ func loadSources(ctx context.Context, env *appEnv, cfg config.Config, flags list
 		return listSources{}, err
 	}
 
-	src := listSources{snap: snap, git: external.NewGitCache(), state: attention.Load(statePath(env.getenv))}
+	src := listSources{snap: snap, state: attention.Load(statePath(env.getenv))}
+	if prev != nil && prev.git != nil && time.Since(prev.gitAt) < gitCacheTTL {
+		src.git, src.gitAt = prev.git, prev.gitAt
+	} else {
+		src.git, src.gitAt = external.NewGitCache(), time.Now()
+	}
 
 	src.current = herdrx.CurrentWorkspaceID(env.getenv("HERDR_WORKSPACE_ID"), env.getenv("HERDR_PLUGIN_CONTEXT_JSON"))
+	if prev != nil {
+		// A re-render inside a live picker prefers the daemon's live focus
+		// over the env var. HERDR_WORKSPACE_ID is captured once, when the
+		// popup is spawned, and never changes for that process — so a picker
+		// left open while the user moves around kept sorting the workspace
+		// they launched from to the top, while the "· current" label (which
+		// reads Workspace.Focused off the snapshot) moved with them. Two
+		// answers to "where am I" on the same screen.
+		//
+		// One-shot `list` keeps the env var first: there, "the workspace this
+		// command was invoked from" is the more meaningful reading, and there
+		// is no re-render for it to drift against.
+		if focused := snap.FocusedWorkspace(); focused != "" {
+			src.current = focused
+		}
+	}
 	if src.current == "" {
 		// New in 0.4.0 (BEHAVIOUR.md §10, superseding §1.7/§2.2.3): fall back
 		// to whatever the daemon says is focused. The env vars are only set
@@ -193,12 +244,21 @@ func loadSources(ctx context.Context, env *appEnv, cfg config.Config, flags list
 			return listSources{}, err
 		}
 		if dirSources && external.ZoxideAvailable() {
-			src.zoxide = external.ZoxideList(ctx)
+			if prev != nil && prev.zoxide != nil {
+				src.zoxide = prev.zoxide
+			} else {
+				src.zoxide = external.ZoxideList(ctx)
+			}
 		}
 	}
 
 	return src, nil
 }
+
+// gitCacheTTL bounds how stale a branch name may get inside one long-lived
+// picker. Short enough that switching branches in another pane shows up,
+// long enough that a burst of agent events costs no subprocesses.
+const gitCacheTTL = 5 * time.Second
 
 // renderRows turns already-fetched sources into `list`'s output for one view.
 // It performs no I/O beyond writing to w and the git subprocesses the cache

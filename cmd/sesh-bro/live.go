@@ -17,6 +17,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cyperx84/herdr-sesh-bro/internal/config"
 	"github.com/cyperx84/herdr-sesh-bro/internal/fzfctl"
@@ -25,7 +26,7 @@ import (
 
 // startLiveUpdates renders the initial view files and starts the watcher that
 // keeps them, and the running picker, current. The returned function stops it.
-func startLiveUpdates(ctx context.Context, env *appEnv, cfg config.Config, dir string, hideCurrent bool) func() {
+func startLiveUpdates(ctx context.Context, env *appEnv, cfg config.Config, dir string, hideCurrent bool, initial listSources) func() {
 	ctx, cancel := context.WithCancel(ctx)
 
 	r := &renderer{
@@ -35,11 +36,15 @@ func startLiveUpdates(ctx context.Context, env *appEnv, cfg config.Config, dir s
 		hideCurrent: hideCurrent,
 		fzf:         fzfctl.New(listenSocketPath(dir)),
 		lastPushed:  map[string]string{},
+		prev:        &initial,
 	}
 
-	// Render once up front so a filter keypress has a file to read even if no
-	// event ever arrives.
-	panes, _ := r.renderAll(ctx)
+	// Render the view files once up front so a filter keypress has something
+	// to read even if no event ever arrives — but do NOT push. fzf has not
+	// created its listen socket yet at this point, so a push here always
+	// failed and was always swallowed, which is a confusing thing to leave in
+	// place for anyone reading the logs.
+	panes, _ := r.renderAll(ctx, false)
 
 	client, openErr := openHerdr(env.getenv)
 	if openErr != nil {
@@ -47,7 +52,7 @@ func startLiveUpdates(ctx context.Context, env *appEnv, cfg config.Config, dir s
 	}
 
 	w := &live.Watcher{Render: func(ctx context.Context) error {
-		_, err := r.renderAll(ctx)
+		_, err := r.renderAll(ctx, true)
 		return err
 	}}
 	go func() { _ = w.Run(ctx, client.Raw(), panes) }()
@@ -64,6 +69,10 @@ type renderer struct {
 	hideCurrent bool
 	fzf         *fzfctl.Client
 
+	// prev carries the previous render's sources so a re-render reuses the
+	// zoxide list and git cache instead of re-shelling them per event.
+	prev *listSources
+
 	// lastPushed is the bytes most recently written per view, so an event
 	// that changes nothing the user can see costs a snapshot read and stops
 	// there. Without it, every pane_updated — which herdr emits freely —
@@ -74,14 +83,18 @@ type renderer struct {
 // renderAll refreshes every view file from one snapshot and, when the visible
 // view actually changed, pushes a reload. It returns the agent panes seen, for
 // the watcher's initial subscription set.
-func (r *renderer) renderAll(ctx context.Context) ([]string, error) {
-	// One snapshot serves every view: loadSources is asked for the union of
-	// what any view needs, and each view is then a pure re-render of it.
+func (r *renderer) renderAll(ctx context.Context, push bool) ([]string, error) {
+	// One snapshot serves every view: sources are read for the union of what
+	// any view needs, and each view is then a pure re-render of it. The
+	// daemon-liveness gate is deliberately skipped — this is driven by an
+	// event that came FROM the daemon, so re-proving it is alive costs a
+	// round trip to learn nothing.
 	unionFlags := listFlags{wantWS: true, wantAgent: true, wantDir: true, header: true}
-	src, err := loadSources(ctx, r.env, r.cfg, unionFlags)
+	src, err := refreshSources(ctx, r.env, r.cfg, unionFlags, r.prev)
 	if err != nil {
 		return nil, err
 	}
+	r.prev = &src
 
 	current := readView(r.dir)
 	changed := false
@@ -115,10 +128,23 @@ func (r *renderer) renderAll(ctx context.Context) ([]string, error) {
 		}
 	}
 
-	if changed {
-		// Errors here mean the picker is gone, which is the normal end of its
-		// life rather than a fault worth reporting.
-		_ = r.fzf.Reload(ctx, rowsFile(r.dir, current), false)
+	if changed && push {
+		// If the row the cursor is tracking is about to disappear, tell fzf to
+		// land on the first row instead. --track otherwise hunts for an
+		// identity that will never arrive; measured against fzf 0.74.3 it
+		// recovers once the stream ends rather than hanging, but it lands
+		// somewhere arbitrary, and "the thing I was looking at is gone" is
+		// better answered by the top of the list than by its neighbour.
+		//
+		// Every error here means the picker is gone, which is the normal end
+		// of its life rather than a fault worth reporting.
+		first := false
+		if st, err := r.fzf.Query(ctx); err == nil {
+			if target := st.CurrentTarget(); target != "" {
+				first = !strings.Contains(r.lastPushed[current], "\t"+target+"\t")
+			}
+		}
+		_ = r.fzf.Reload(ctx, rowsFile(r.dir, current), first)
 	}
 	return src.snap.AgentPanes(), nil
 }

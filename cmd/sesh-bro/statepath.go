@@ -50,6 +50,7 @@ func statePath(getenv func(string) string) string {
 // attentionLoad and attentionSave are indirections so tests can observe the
 // recording path without a real state directory.
 var (
-	attentionLoad = attention.Load
-	attentionSave = attention.Save
+	attentionLoad   = attention.Load
+	attentionSave   = attention.Save
+	attentionUpdate = attention.Update
 )

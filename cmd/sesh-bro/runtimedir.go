@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
 )
 
 // runtimeDir returns a private scratch directory for one running picker,
@@ -78,3 +82,51 @@ func viewFlags(view string) []string {
 		return nil
 	}
 }
+
+// pruneStaleRuntimeDirs removes runtime directories left behind by pickers
+// that are no longer running.
+//
+// The normal exit path removes its own directory, but a picker killed by
+// SIGKILL — or by herdr tearing the popup down — never gets there, and nothing
+// else ever looked. Each leak is small, and that is exactly why it would have
+// gone unnoticed indefinitely while $TMPDIR filled with sockets and row files.
+//
+// Liveness is `kill(pid, 0)`: it asks the kernel whether the process exists
+// without touching it. The mtime guard exists because pids are recycled — a
+// directory whose pid has been reissued to something unrelated would otherwise
+// look alive forever — and because a picker that has just started may not have
+// written anything yet, so a young directory is never removed even if its pid
+// reads dead.
+func pruneStaleRuntimeDirs(getenv func(string) string, self int) {
+	base := getenv("TMPDIR")
+	if base == "" {
+		base = "/tmp"
+	}
+	root := filepath.Join(base, fmt.Sprintf("sesh-bro-%d", os.Getuid()))
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "p") {
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimPrefix(e.Name(), "p"))
+		if err != nil || pid == self {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || time.Since(info.ModTime()) < staleRuntimeAge {
+			continue
+		}
+		if err := syscall.Kill(pid, 0); err == nil {
+			continue // still running
+		}
+		_ = os.RemoveAll(filepath.Join(root, e.Name()))
+	}
+}
+
+// staleRuntimeAge is how long a directory must have been untouched before a
+// dead pid is believed. Generous, because the cost of waiting is a few
+// kilobytes and the cost of being wrong is deleting a live picker's files.
+const staleRuntimeAge = time.Minute

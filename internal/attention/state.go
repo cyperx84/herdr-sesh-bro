@@ -204,14 +204,19 @@ func FormatAge(d time.Duration) string {
 // read-modify-write on this file. The lock serialises them so one does not
 // clobber another's change; the temp-file-and-rename means a reader never sees
 // a half-written file.
-func Save(path string, s State) error {
-	if s.Version == 0 {
-		s.Version = Version
-	}
+// Update applies mutate to the stored state under an exclusive lock held
+// across the whole read-modify-write.
+//
+// This is the only safe way to change the file, and Save alone was not enough.
+// The writers are independent short-lived hook processes and herdr can invoke
+// several at once; with the lock held only around the write, two hooks could
+// both Load, both mutate their own copy, and both Save — losing one change
+// silently. Today that costs a badge. It stops being cosmetic the moment
+// anything the user typed lives in here.
+func Update(path string, mutate func(*State)) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("attention: create state dir: %w", err)
 	}
-
 	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return fmt.Errorf("attention: open lock: %w", err)
@@ -222,6 +227,37 @@ func Save(path string, s State) error {
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 
+	// Read INSIDE the lock. That is the entire point.
+	s := Load(path)
+	mutate(&s)
+	return writeLocked(path, s)
+}
+
+// Save replaces the stored state wholesale. Prefer Update for anything that
+// derives from what is already there; this remains for callers that genuinely
+// own the whole value.
+func Save(path string, s State) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("attention: create state dir: %w", err)
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("attention: open lock: %w", err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("attention: lock: %w", err)
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	return writeLocked(path, s)
+}
+
+// writeLocked marshals and atomically replaces the file. The caller holds the
+// lock; temp-file-and-rename means a reader never sees a half-written file.
+func writeLocked(path string, s State) error {
+	if s.Version == 0 {
+		s.Version = Version
+	}
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("attention: marshal: %w", err)

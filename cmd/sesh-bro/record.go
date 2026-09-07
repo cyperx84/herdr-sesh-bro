@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/cyperx84/herdr-sesh-bro/internal/attention"
 )
 
 // eventEnvelope is the shape of $HERDR_PLUGIN_EVENT_JSON. herdr names the
@@ -49,21 +51,21 @@ func cmdRecordEvent(ctx context.Context, env *appEnv) int {
 		return 0
 	}
 
-	state := attentionLoad(path)
 	now := time.Now()
 
-	switch {
-	case ev.Data.AgentStatus != "" && ev.Data.PaneID != "":
-		state.ApplyStatus(ev.Data.PaneID, ev.Data.WorkspaceID, ev.Data.AgentStatus, now)
-	case ev.Data.WorkspaceID != "":
-		// A workspace focus with no agent status: this is what makes `last`
-		// a real most-recently-used jump rather than "the highest-numbered
-		// other workspace", which is what it silently was before.
-		state.ApplyFocus(ev.Data.WorkspaceID, now)
-	default:
-		return 0
-	}
-
-	_ = attentionSave(path, state)
+	// Read-modify-write under one lock. herdr can fire several hooks at once,
+	// and the previous load-then-save pair could lose one process's change to
+	// another's — invisibly, because each write succeeded.
+	_ = attentionUpdate(path, func(state *attention.State) {
+		switch {
+		case ev.Data.AgentStatus != "" && ev.Data.PaneID != "":
+			state.ApplyStatus(ev.Data.PaneID, ev.Data.WorkspaceID, ev.Data.AgentStatus, now)
+		case ev.Data.WorkspaceID != "":
+			// A workspace focus with no agent status: this is what makes
+			// `last` a real most-recently-used jump rather than "the
+			// highest-numbered other workspace", which it silently was.
+			state.ApplyFocus(ev.Data.WorkspaceID, now)
+		}
+	})
 	return 0
 }

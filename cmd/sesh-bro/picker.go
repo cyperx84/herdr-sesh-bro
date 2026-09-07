@@ -9,7 +9,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/cyperx84/herdr-sesh-bro/internal/config"
 	"github.com/cyperx84/herdr-sesh-bro/internal/external"
@@ -80,9 +82,31 @@ func cmdPicker(ctx context.Context, env *appEnv, args []string) int {
 	// completion, exiting 0 unless a REAL selection's connect then fails.
 	// Print the error, close the pipe, and let fzf open on whatever rows
 	// (possibly zero) made it through before the failure.
+	// Read the session ONCE. The rows fzf opens on and the rows the live
+	// layer seeds its view files from are the same read: before this, opening
+	// the picker took two full snapshots plus a liveness probe, because
+	// listOutput and the renderer each fetched their own.
+	//
+	// The dependency gate runs here, up front, and never again — the live
+	// layer is driven by events that come from the daemon, so re-proving it
+	// is alive per event would be a round trip to learn nothing.
+	initialFlags, flagErr := parseListFlags(append(pickerArgs, "--header"))
+	var initial listSources
+	if flagErr == nil {
+		if err := checkListDeps(ctx, env); err != nil {
+			flagErr = err
+		} else {
+			initial, flagErr = loadSources(ctx, env, cfg, initialFlags)
+		}
+	}
+
 	pr, pw := io.Pipe()
 	go func() {
-		if err := listOutput(ctx, env, append(pickerArgs, "--header"), pw); err != nil {
+		// S16 semantics are preserved: a failure here prints and closes the
+		// pipe, and fzf opens on whatever made it through.
+		if flagErr != nil {
+			fmt.Fprintln(env.stderr, flagErr)
+		} else if err := renderRows(ctx, cfg, initialFlags, initial, pw); err != nil {
 			fmt.Fprintln(env.stderr, err)
 		}
 		pw.Close()
@@ -118,9 +142,35 @@ func cmdPicker(ctx context.Context, env *appEnv, args []string) int {
 	if feats.Live() {
 		if dir, err := runtimeDir(env.getenv, os.Getpid()); err == nil {
 			defer os.RemoveAll(dir)
+
+			// Sweep whatever earlier pickers left behind when they were
+			// killed rather than closed. Doing it here rather than only at
+			// startup means a machine that never restarts its herdr server
+			// still gets cleaned up.
+			pruneStaleRuntimeDirs(env.getenv, os.Getpid())
+
+			// The deferred cleanup above only runs on a normal return. herdr
+			// tearing down the popup, or any ordinary kill, skips it — which
+			// is how these directories accumulated in the first place. Catch
+			// the signals that can be caught, clean up, and re-raise so the
+			// exit status still reflects the signal rather than pretending
+			// the process ended normally.
+			sig := make(chan os.Signal, 1)
+			signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+			defer signal.Stop(sig)
+			go func() {
+				s, ok := <-sig
+				if !ok {
+					return
+				}
+				os.RemoveAll(dir)
+				signal.Reset(s.(syscall.Signal))
+				_ = syscall.Kill(os.Getpid(), s.(syscall.Signal))
+			}()
+
 			opts.RowsDir = dir
 			opts.ListenSocket = listenSocketPath(dir)
-			stop := startLiveUpdates(ctx, env, cfg, dir, hideCurrent)
+			stop := startLiveUpdates(ctx, env, cfg, dir, hideCurrent, initial)
 			defer stop()
 		}
 	}

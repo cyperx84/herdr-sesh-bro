@@ -81,3 +81,55 @@ func TestPostSurfacesNon2xx(t *testing.T) {
 		t.Errorf("err = %v, want one naming the 400", err)
 	}
 }
+
+// The cursor is tracked by the row's target field, not by the whole line: the
+// display field carries a status age that ticks, and a row whose badge went
+// from 9m to 10m is the same row.
+func TestStateCurrentTarget(t *testing.T) {
+	for name, tc := range map[string]struct{ text, want string }{
+		"normal row":   {"agent\tw1:p2\t● claude · thing · 9m", "w1:p2"},
+		"header row":   {"header\t-\t● 2 blocked", "-"},
+		"no fields":    {"garbage", ""},
+		"empty cursor": {"", ""},
+	} {
+		var s State
+		s.Current.Text = tc.text
+		if got := s.CurrentTarget(); got != tc.want {
+			t.Errorf("%s: CurrentTarget() = %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
+func TestQueryDecodesState(t *testing.T) {
+	dir, err := os.MkdirTemp("", "fq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "f.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"matchCount":3,"totalCount":9,"current":{"text":"agent\tw1:p2\trow"}}`))
+	})}
+	go srv.Serve(ln)
+	t.Cleanup(func() { srv.Close() })
+
+	st, err := New(socket).Query(context.Background())
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if st.MatchCount != 3 || st.TotalCount != 9 || st.CurrentTarget() != "w1:p2" {
+		t.Errorf("decoded %+v, target %q", st, st.CurrentTarget())
+	}
+}
+
+// A picker the user already closed is the normal case, and must be an ordinary
+// error the caller can shrug at rather than anything louder.
+func TestQueryOnDeadSocketErrors(t *testing.T) {
+	if _, err := New("/nonexistent/nope.sock").Query(context.Background()); err == nil {
+		t.Error("Query on a dead socket returned nil error")
+	}
+}

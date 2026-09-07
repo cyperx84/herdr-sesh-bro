@@ -14,10 +14,19 @@ import (
 func withRecordedState(t *testing.T) *attention.State {
 	t.Helper()
 	held := attention.New()
-	origLoad, origSave := attentionLoad, attentionSave
+	origLoad, origSave, origUpdate := attentionLoad, attentionSave, attentionUpdate
 	attentionLoad = func(string) attention.State { return held }
 	attentionSave = func(_ string, s attention.State) error { held = s; return nil }
-	t.Cleanup(func() { attentionLoad, attentionSave = origLoad, origSave })
+	// The real Update reads inside its own lock; the double applies the same
+	// read-modify-write shape to the in-memory value so the hook is exercised
+	// exactly as it runs in production.
+	attentionUpdate = func(_ string, mutate func(*attention.State)) error {
+		mutate(&held)
+		return nil
+	}
+	t.Cleanup(func() {
+		attentionLoad, attentionSave, attentionUpdate = origLoad, origSave, origUpdate
+	})
 	return &held
 }
 

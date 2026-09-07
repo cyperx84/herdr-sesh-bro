@@ -66,7 +66,7 @@ func TestRenderAllWritesEveryView(t *testing.T) {
 		liveAgent("stuck", "w1:p1", herdr.StatusBlocked, 10),
 		liveAgent("calm", "w1:p2", herdr.StatusIdle, 20),
 	})
-	if _, err := r.renderAll(context.Background()); err != nil {
+	if _, err := r.renderAll(context.Background(), false); err != nil {
 		t.Fatalf("renderAll: %v", err)
 	}
 	for _, view := range pickerViews {
@@ -94,7 +94,7 @@ func TestRenderAllViewsCarryHeaderRow(t *testing.T) {
 	r, _ := liveRenderer(t, []herdrtest.SnapshotFixtureAgent{
 		liveAgent("stuck", "w1:p1", herdr.StatusBlocked, 10),
 	})
-	if _, err := r.renderAll(context.Background()); err != nil {
+	if _, err := r.renderAll(context.Background(), false); err != nil {
 		t.Fatalf("renderAll: %v", err)
 	}
 	for _, view := range pickerViews {
@@ -117,7 +117,7 @@ func TestRenderAllSkipsUnchangedViews(t *testing.T) {
 		liveAgent("stuck", "w1:p1", herdr.StatusBlocked, 10),
 	})
 	ctx := context.Background()
-	if _, err := r.renderAll(ctx); err != nil {
+	if _, err := r.renderAll(ctx, false); err != nil {
 		t.Fatalf("renderAll: %v", err)
 	}
 	before := r.lastPushed["all"]
@@ -129,7 +129,7 @@ func TestRenderAllSkipsUnchangedViews(t *testing.T) {
 	if err := os.WriteFile(rowsFile(r.dir, "all"), []byte("sentinel\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.renderAll(ctx); err != nil {
+	if _, err := r.renderAll(ctx, false); err != nil {
 		t.Fatalf("renderAll: %v", err)
 	}
 	b, err := os.ReadFile(rowsFile(r.dir, "all"))
@@ -148,7 +148,7 @@ func TestRenderAllReportsAgentPanes(t *testing.T) {
 		liveAgent("a", "w1:p1", herdr.StatusBlocked, 10),
 		liveAgent("b", "w1:p2", herdr.StatusIdle, 20),
 	})
-	panes, err := r.renderAll(context.Background())
+	panes, err := r.renderAll(context.Background(), false)
 	if err != nil {
 		t.Fatalf("renderAll: %v", err)
 	}
@@ -188,5 +188,128 @@ func TestReadViewDefaultsAndValidates(t *testing.T) {
 func TestListenSocketPathIsASock(t *testing.T) {
 	if got := listenSocketPath("/tmp/x"); !strings.HasSuffix(got, ".sock") {
 		t.Errorf("listen socket = %q, want a .sock suffix", got)
+	}
+}
+
+// A herdr event cannot change the zoxide ranking or a git branch, so a
+// re-render must not re-shell either. Before this, every debounced event cost
+// one zoxide subprocess plus a `git status` PER WORKSPACE CWD — on a machine
+// with a dozen workspaces, a burst of agent activity meant a burst of
+// subprocesses for data that had not moved.
+func TestRenderAllReusesZoxideAcrossEvents(t *testing.T) {
+	r, _ := liveRenderer(t, []herdrtest.SnapshotFixtureAgent{
+		liveAgent("a", "w1:p1", herdr.StatusBlocked, 10),
+	})
+	ctx := context.Background()
+
+	if _, err := r.renderAll(ctx, false); err != nil {
+		t.Fatalf("renderAll: %v", err)
+	}
+	first := r.prev
+	if first == nil {
+		t.Fatal("renderAll did not retain its sources for reuse")
+	}
+	// Plant a sentinel the next render must reuse rather than recompute.
+	sentinel := []string{"/sentinel/dir"}
+	r.prev.zoxide = sentinel
+	gitBefore := r.prev.git
+
+	if _, err := r.renderAll(ctx, false); err != nil {
+		t.Fatalf("renderAll: %v", err)
+	}
+	if len(r.prev.zoxide) != 1 || r.prev.zoxide[0] != "/sentinel/dir" {
+		t.Errorf("zoxide list was recomputed instead of reused: %v", r.prev.zoxide)
+	}
+	if r.prev.git != gitBefore {
+		t.Error("git cache was rebuilt on a re-render; every workspace would be re-probed")
+	}
+}
+
+// The first render happens before fzf has created its listen socket, so a push
+// there could only ever fail. It used to be attempted and swallowed, which
+// left a permanent misleading failure in any log anyone turned on.
+func TestRenderAllDoesNotPushWhenAskedNotTo(t *testing.T) {
+	r, _ := liveRenderer(t, []herdrtest.SnapshotFixtureAgent{
+		liveAgent("a", "w1:p1", herdr.StatusBlocked, 10),
+	})
+	// listenSocketPath(dir) does not exist — a push would error. renderAll
+	// must not attempt one, and must still succeed.
+	if _, err := r.renderAll(context.Background(), false); err != nil {
+		t.Fatalf("renderAll(push=false) = %v, want success with no push attempted", err)
+	}
+	if _, err := os.Stat(listenSocketPath(r.dir)); !os.IsNotExist(err) {
+		t.Fatalf("test precondition: expected no listen socket at %s", listenSocketPath(r.dir))
+	}
+}
+
+// The daemon-liveness gate belongs at picker open, not on every event: an
+// event arriving IS evidence the daemon is alive, so re-proving it costs a
+// round trip to learn nothing.
+func TestRenderAllSkipsTheLivenessProbe(t *testing.T) {
+	r, s := liveRenderer(t, []herdrtest.SnapshotFixtureAgent{
+		liveAgent("a", "w1:p1", herdr.StatusBlocked, 10),
+	})
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if _, err := r.renderAll(ctx, false); err != nil {
+			t.Fatalf("renderAll: %v", err)
+		}
+	}
+	if n := len(s.Calls("workspace.list")); n != 0 {
+		t.Errorf("renderAll made %d liveness probes across 3 renders, want 0", n)
+	}
+	if n := len(s.Calls("session.snapshot")); n != 3 {
+		t.Errorf("session.snapshot calls = %d, want one per render", n)
+	}
+}
+
+// HERDR_WORKSPACE_ID is captured when the popup spawns and never changes, so a
+// picker left open while the user moves around kept sorting the launch
+// workspace first while the "· current" label followed the daemon. A re-render
+// must prefer the live focus so the two agree.
+func TestRenderAllPrefersLiveFocusOverLaunchEnv(t *testing.T) {
+	s := herdrtest.Start(t)
+	s.Handle("workspace.list", func(json.RawMessage) (any, error) {
+		return map[string]any{"workspaces": []map[string]any{}}, nil
+	})
+	s.Handle("session.snapshot", func(json.RawMessage) (any, error) {
+		raw := herdrtest.SnapshotFixture{
+			Workspaces:         []herdr.Workspace{{ID: "w1", Number: 1, Label: "one"}, {ID: "w2", Number: 2, Label: "two"}},
+			FocusedWorkspaceID: "w2",
+		}.SnapshotJSON()
+		return json.RawMessage(raw), nil
+	})
+
+	dir, err := os.MkdirTemp("", "lf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	env := &appEnv{
+		// Launched from w1; the daemon has since focused w2.
+		getenv:   fakeEnv(map[string]string{"HERDR_SOCKET_PATH": s.Path(), "HERDR_BIN_PATH": "/bin/sh", "HERDR_WORKSPACE_ID": "w1"}),
+		herdrBin: "/bin/sh",
+		stdout:   &bytes.Buffer{},
+		stderr:   &bytes.Buffer{},
+		self:     "/nonexistent/sesh-bro",
+	}
+	r := &renderer{env: env, cfg: config.Load(env.getenv), dir: dir,
+		fzf: fzfctl.New(listenSocketPath(dir)), lastPushed: map[string]string{}}
+
+	// First render is the "one-shot" shape (no prev): the env var wins.
+	if _, err := r.renderAll(context.Background(), false); err != nil {
+		t.Fatalf("renderAll: %v", err)
+	}
+	if r.prev.current != "w1" {
+		t.Errorf("first render current = %q, want the launch workspace w1", r.prev.current)
+	}
+
+	// Second render is a re-render: the daemon's focus wins.
+	if _, err := r.renderAll(context.Background(), false); err != nil {
+		t.Fatalf("renderAll: %v", err)
+	}
+	if r.prev.current != "w2" {
+		t.Errorf("re-render current = %q, want the live focus w2", r.prev.current)
 	}
 }

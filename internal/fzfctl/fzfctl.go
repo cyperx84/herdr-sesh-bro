@@ -12,6 +12,7 @@ package fzfctl
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -100,4 +101,49 @@ func (c *Client) Reload(ctx context.Context, rowsFile string, first bool) error 
 // own argv strings.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// State is the slice of fzf's reported state this package needs.
+type State struct {
+	Current struct {
+		Text string `json:"text"`
+	} `json:"current"`
+	MatchCount int `json:"matchCount"`
+	TotalCount int `json:"totalCount"`
+}
+
+// CurrentTarget returns the TSV target field (field 2) of the row the cursor
+// is on, or "" when there is no cursor or the line has no fields.
+//
+// Field 2 rather than the whole line because that is the identity --id-nth
+// tracks, and the display field carries volatile text — a status badge ticking
+// from 9m to 10m would otherwise look like a different row.
+func (s State) CurrentTarget() string {
+	parts := strings.Split(s.Current.Text, "\t")
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
+}
+
+// Query asks a running fzf for its current state.
+func (c *Client) Query(ctx context.Context) (State, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://fzf/?limit=1", nil)
+	if err != nil {
+		return State{}, fmt.Errorf("fzfctl: build request: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return State{}, fmt.Errorf("fzfctl: query %s: %w", c.socket, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return State{}, fmt.Errorf("fzfctl: read state: %w", err)
+	}
+	var st State
+	if err := json.Unmarshal(body, &st); err != nil {
+		return State{}, fmt.Errorf("fzfctl: decode state: %w", err)
+	}
+	return st, nil
 }
