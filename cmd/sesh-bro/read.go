@@ -115,6 +115,13 @@ func cmdRead(ctx context.Context, env *appEnv, args []string) int {
 		return 2
 	}
 
+	if err := refuseForeign("read", flags.target); err != nil {
+		fmt.Fprintln(env.stderr, err)
+		if flags.asJSON {
+			writeHeadlessJSON(env.stdout, false, "read", nil, err.Error())
+		}
+		return 2
+	}
 	client, openErr := openHerdr(env.getenv)
 	if err := external.CheckListDeps(ctx, env.herdrBin, aliverFor(client, openErr)); err != nil {
 		writeReadOutput(env, flags.asJSON, "", err.Error())

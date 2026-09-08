@@ -35,6 +35,8 @@ func cmdPreview(ctx context.Context, env *appEnv, args []string) int {
 		return previewAgent(ctx, env, client, openErr, target)
 	case "dir":
 		return previewDir(env, target)
+	case "session", "ragent":
+		return previewForeign(ctx, env, kind, target)
 	default:
 		fmt.Fprint(env.stdout, render.PreviewUnknown())
 		return 0
@@ -238,4 +240,68 @@ func writeReadmeBody(w io.Writer, path string) {
 	for _, l := range lines {
 		fmt.Fprint(w, l)
 	}
+}
+
+// previewForeign renders a read-only look into another session.
+//
+// It dials that session's socket directly rather than going through the local
+// client, which is the ONE cross-session thing that works: sockets carry no
+// auth beyond file permissions and session.snapshot is a pure read
+// (docs/MULTI-SESSION.md). Every mutating call is refused elsewhere.
+//
+// It shows a summary rather than the pane's screen. `pane.read` on a foreign
+// socket would work, and deliberately is not used: a preview that renders
+// another session's live terminal invites exactly the mistake this whole
+// design exists to prevent — reaching for a key to answer what you can see,
+// and having it silently act on the session you are actually in.
+func previewForeign(ctx context.Context, env *appEnv, kind, target string) int {
+	name := target
+	if kind == "ragent" {
+		_, session, ok := herdrx.SplitForeignTarget(target)
+		if !ok {
+			fmt.Fprint(env.stdout, render.PreviewUnknown())
+			return 0
+		}
+		name = session
+	}
+
+	sessions, err := listSessions(ctx, sessionRunner(env.getenv))
+	if err != nil {
+		fmt.Fprint(env.stdout, render.PreviewSessionUnreachable(name))
+		return 0
+	}
+	var socket string
+	for _, s := range sessions {
+		if s.Name == name && s.Running {
+			socket = s.SocketPath
+			break
+		}
+	}
+	if socket == "" {
+		fmt.Fprint(env.stdout, render.PreviewSessionUnreachable(name))
+		return 0
+	}
+	client, err := herdrx.OpenPath(socket)
+	if err != nil {
+		fmt.Fprint(env.stdout, render.PreviewSessionUnreachable(name))
+		return 0
+	}
+	snap, err := client.SessionSnapshot(ctx)
+	if err != nil {
+		fmt.Fprint(env.stdout, render.PreviewSessionUnreachable(name))
+		return 0
+	}
+
+	fmt.Fprint(env.stdout, render.PreviewSessionHeader(name, snap.Version))
+	for _, r := range herdrx.ForeignRows([]herdrx.ForeignSnapshot{{
+		Session:  herdrx.Session{Name: name, Running: true, SocketPath: socket},
+		Snapshot: snap,
+	}}) {
+		if r.Type != herdrx.RowRAgent {
+			continue
+		}
+		fmt.Fprint(env.stdout, render.PreviewSessionAgentLine(r.Status, r.Label, r.Detail))
+	}
+	fmt.Fprint(env.stdout, render.PreviewSessionFooter(name))
+	return 0
 }

@@ -248,6 +248,47 @@ case $? in
 esac
 ```
 
+## Other sessions
+
+```sh
+sesh-bro sessions --json          # every session on this machine
+sesh-bro sessions --running
+sesh-bro list --all-sessions --jsonl
+sesh-bro counts --all-sessions
+```
+
+A herdr session is a daemon. N sessions are N server processes with N sockets,
+and **no herdr API call takes a session parameter** — verified again against
+protocol 22, where the only `session_id` in the whole schema is
+`agent_session_id`, a coding agent's own identity. So every call lands on
+whichever socket it dialled.
+
+That makes other sessions **readable and not writable**. `--all-sessions` adds
+one `session` row per other running session and one `ragent` row per agent
+inside it, with targets composed as `<id>@<session>`.
+
+Every mutating command refuses a composed target with **exit 2**, naming the
+session and what to do instead. That includes `prompt`, `reply`, `star`,
+`close`, and also `read` and `explain` — they dial the local socket, so a
+foreign target would not fail, it would silently act on a same-named agent
+here. herdr's ids are scoped to one server and two sessions can both hold
+`w1:p1` or an agent called `reviewer`.
+
+The one thing that does work is leaving:
+
+```sh
+sesh-bro connect session work
+```
+
+That opens a terminal running `herdr session attach work`, via
+`SESH_BRO_ATTACH_CMD` (a shell command containing `{session}`). macOS has a
+default; every other platform must set the variable, because terminal
+emulators vary too much for a guess to be right.
+
+Foreign rows are polled, not subscribed — `SESH_BRO_FOREIGN_INTERVAL`, default
+`5s`, `0` to disable. It is the only poll in the project, and
+`internal/live`'s package comment says why.
+
 ## What sesh-bro will not do
 
 - **Act on another herdr session.** It can list other sessions read-only, but

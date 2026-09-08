@@ -47,6 +47,14 @@ func cmdExplain(ctx context.Context, env *appEnv, args []string) int {
 		return output.ExitUsage
 	}
 
+	if err := refuseForeign("explain", target); err != nil {
+		fmt.Fprintln(env.stderr, err)
+		if asJSON {
+			_ = output.Emit(env.stdout, output.Failure("explain", err))
+		}
+		return output.ExitUsage
+	}
+
 	client, openErr := openHerdr(env.getenv)
 	if err := external.CheckListDeps(ctx, env.herdrBin, aliverFor(client, openErr)); err != nil {
 		fmt.Fprintln(env.stderr, err)

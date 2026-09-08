@@ -37,6 +37,20 @@ func cmdConnect(ctx context.Context, env *appEnv, args []string) int {
 // caller mid-picker exactly as much as for a direct `sesh-bro connect`
 // invocation (BEHAVIOUR.md §2.3: "exits the process, does not return").
 func connect(ctx context.Context, env *appEnv, client *herdrx.Client, openErr error, kind, target string) error {
+	// A composed target reaching the local kinds means a foreign row was
+	// dispatched as a local one — most easily by someone typing
+	// `connect agent builder@work` by hand. Without this it reaches
+	// agent.focus on THIS daemon and fails as not-found, exit 1, which reads
+	// as "that agent is gone" rather than "that agent is somewhere I cannot
+	// reach from here".
+	switch kind {
+	case "workspace", "agent":
+		if err := refuseForeign("connect", target); err != nil {
+			fmt.Fprintln(env.stderr, err)
+			os.Exit(2)
+		}
+	}
+
 	switch kind {
 	case "workspace":
 		if err := focusWorkspace(ctx, client, openErr, target); err != nil {
@@ -54,6 +68,30 @@ func connect(ctx context.Context, env *appEnv, client *herdrx.Client, openErr er
 		return connectDir(ctx, env, client, openErr, target)
 	case "worktree":
 		return connectWorktree(ctx, env, client, openErr, target)
+	case "session":
+		// The whole cross-session escape hatch: a new terminal running
+		// `herdr session attach`. See attach.go for why nothing else works.
+		if err := attachSession(ctx, env, target); err != nil {
+			fmt.Fprintln(env.stderr, err)
+			return err
+		}
+		return nil
+	case "ragent":
+		// An agent in another session cannot be focused — no herdr call takes
+		// a session, so `agent.focus` would land on THIS daemon and either
+		// miss or, worse, hit a same-named agent here. The honest action is
+		// the one that actually gets the user to it: attach the session it
+		// lives in, and let them find it there.
+		_, session, ok := herdrx.SplitForeignTarget(target)
+		if !ok {
+			fmt.Fprintf(env.stderr, "sesh-bro: %s is not a foreign agent target\n", target)
+			return fmt.Errorf("sesh-bro: malformed ragent target %q", target)
+		}
+		if err := attachSession(ctx, env, session); err != nil {
+			fmt.Fprintln(env.stderr, err)
+			return err
+		}
+		return nil
 	default:
 		fmt.Fprintf(env.stderr, "sesh-bro connect: unknown type %s\n", kind)
 		os.Exit(2)

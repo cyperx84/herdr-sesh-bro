@@ -138,6 +138,14 @@ func cmdReply(ctx context.Context, env *appEnv, args []string) int {
 		return output.ExitUsage
 	}
 
+	if err := refuseForeign("reply", flags.target); err != nil {
+		fmt.Fprintln(env.stderr, err)
+		if flags.asJSON {
+			_ = output.Emit(env.stdout, output.Failure("reply", err))
+		}
+		return output.ExitUsage
+	}
+
 	replies := loadReplies(repliesPath(env.getenv))
 	if flags.list {
 		results := make([]any, 0, len(replies))

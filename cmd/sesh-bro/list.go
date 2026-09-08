@@ -32,6 +32,16 @@ type listFlags struct {
 	hideCurrent                bool
 	asJSON                     bool
 	asJSONL                    bool
+	// allSessions adds READ-ONLY rows from every other running herdr session:
+	// one row per session, one per agent inside it.
+	//
+	// It is an ADDITIVE flag, not a source flag, and so does not participate
+	// in the S3 order trap above. `--blocked --all-sessions` means "blocked
+	// agents here, plus what is happening elsewhere", which is the only
+	// reading that composes: making it clear the local sources would produce a
+	// picker with no local rows at all, and making the status filters apply to
+	// foreign rows would hide the very sessions the flag exists to reveal.
+	allSessions bool
 	// header emits a pinned counts row as the first line, for fzf's
 	// --header-lines=1. Like --json it is an OUTPUT flag: parseListFlags must
 	// not let it touch the source selection, or `list --header --agents`
@@ -80,6 +90,8 @@ func parseListFlags(args []string) (listFlags, error) {
 			f.asJSONL = true
 		case "--header":
 			f.header = true
+		case "--all-sessions":
+			f.allSessions = true
 		default:
 			return listFlags{}, fmt.Errorf("sesh-bro list: unknown flag %s", a)
 		}
@@ -142,6 +154,18 @@ type listSources struct {
 	state attention.State
 	// starred is the pinned-agent lookup, keyed "<kind>:<key>".
 	starred map[string]bool
+	// foreign holds the other running sessions' snapshots, empty unless
+	// --all-sessions asked for them.
+	foreign []herdrx.ForeignSnapshot
+	// allSessions is the resolved answer to "show other sessions", flag ORed
+	// with config, so the renderer does not have to ask again with a Config it
+	// may not have.
+	allSessions bool
+	// foreignAt is when foreign was fetched, for the ticker's TTL. Foreign
+	// sessions push no events to this one — following them properly would mean
+	// O(sessions × panes) held connections for a secondary view — so this is
+	// the project's one deliberate polling exception, and it needs a clock.
+	foreignAt time.Time
 }
 
 // loadSources performs every read `list` needs: one session.snapshot, plus
@@ -169,7 +193,7 @@ func loadSources(ctx context.Context, env *appEnv, cfg config.Config, flags list
 	if err := checkListDeps(ctx, env); err != nil {
 		return listSources{}, err
 	}
-	return refreshSources(ctx, env, cfg, flags, nil)
+	return refreshSources(ctx, env, cfg, flags, nil, false)
 }
 
 // refreshSources re-reads what a render needs, reusing anything from prev that
@@ -184,7 +208,15 @@ func loadSources(ctx context.Context, env *appEnv, cfg config.Config, flags list
 // The git cache still expires, because a branch really can change under a long
 // open picker; zoxide's list does not, because a directory ranking that shifts
 // mid-picker is noise, not news.
-func refreshSources(ctx context.Context, env *appEnv, cfg config.Config, flags listFlags, prev *listSources) (listSources, error) {
+// keepGit forces the git cache to be carried over regardless of its TTL. It is
+// true for a render driven by the foreign ticker, whose whole purpose is to
+// re-read OTHER sessions: the local branch names cannot have changed because
+// of anything happening in another daemon, and gitCacheTTL happens to equal
+// the default foreign interval, so without this a five-second tick would
+// respawn `git status` in every open workspace forever — a background process
+// quietly running git across every repo you have open, to refresh a row you
+// cannot act on.
+func refreshSources(ctx context.Context, env *appEnv, cfg config.Config, flags listFlags, prev *listSources, keepGit bool) (listSources, error) {
 	client, openErr := openHerdr(env.getenv)
 
 	// One call replaces workspace.list + agent.list + pane.list twice, and
@@ -200,7 +232,7 @@ func refreshSources(ctx context.Context, env *appEnv, cfg config.Config, flags l
 		state:   attention.Load(statePath(env.getenv)),
 		starred: stars.Set(starsLoad(starsPath(env.getenv))),
 	}
-	if prev != nil && prev.git != nil && time.Since(prev.gitAt) < gitCacheTTL {
+	if prev != nil && prev.git != nil && (keepGit || time.Since(prev.gitAt) < gitCacheTTL) {
 		src.git, src.gitAt = prev.git, prev.gitAt
 	} else {
 		src.git, src.gitAt = external.NewGitCache(), time.Now()
@@ -291,7 +323,85 @@ func refreshSources(ctx context.Context, env *appEnv, cfg config.Config, flags l
 		}
 	}
 
+	// Foreign sessions. The one deliberate polling exception in the project —
+	// see internal/live's package comment, which says so rather than leaving
+	// its anti-polling position to quietly become false.
+	//
+	// The interval is a TTL rather than a timer: a re-render triggered by a
+	// LOCAL event reuses foreign rows that are still fresh, so a busy local
+	// session costs no extra socket dials, and a quiet one still refreshes on
+	// the next event after the TTL lapses. Nothing here fetches on a schedule
+	// of its own; live.go drives the clock.
+	//
+	// The flag ORs with the config HERE, not in listOutput, because two
+	// callers build flags and only one of them goes through listOutput: the
+	// live renderer parses its own from viewFlags on every event. Resolving it
+	// upstream left the picker's initial render and every event push without
+	// foreign rows, while a reload through `list` briefly showed them — a
+	// flicker whose cause is invisible from either call site alone.
+	all, err := cfg.AllSessions()
+	if err != nil {
+		return listSources{}, err
+	}
+	src.allSessions = flags.allSessions || all
+	if src.allSessions {
+		interval, err := cfg.ForeignInterval()
+		if err != nil {
+			return listSources{}, err
+		}
+		switch {
+		case interval <= 0:
+			// Explicitly disabled. Not "fetch once anyway": a user who set the
+			// interval to 0 asked for no cross-session traffic at all.
+		case prev != nil && !prev.foreignAt.IsZero() && time.Since(prev.foreignAt) < interval:
+			// Keyed on the TIMESTAMP, not on the slice being non-nil. On the
+			// common one-session machine fetchForeign correctly returns
+			// nothing, and a nil check would therefore re-run `herdr session
+			// list` on every single event — the exact per-event subprocess
+			// 0.4.1 existed to remove, reintroduced by the feature that
+			// finds nothing.
+			src.foreign, src.foreignAt = prev.foreign, prev.foreignAt
+		default:
+			src.foreign, src.foreignAt = fetchForeign(ctx, env, selfSocket(ctx, env)), time.Now()
+		}
+	}
+
 	return src, nil
+}
+
+// fetchForeign enumerates sessions and snapshots every running one but this.
+//
+// Enumeration failure yields no rows rather than an error: the foreign view is
+// secondary and must never be able to fail the picker that the user opened to
+// look at their own session.
+func fetchForeign(ctx context.Context, env *appEnv, selfSocket string) []herdrx.ForeignSnapshot {
+	sessions, err := listSessions(ctx, sessionRunner(env.getenv))
+	if err != nil {
+		return nil
+	}
+	return herdrx.ForeignSnapshots(ctx, sessions, selfSocket)
+}
+
+// selfSocket is the socket THIS process is talking to, so ForeignSnapshots can
+// exclude it.
+//
+// It must resolve the same way openHerdr does, including the discovery
+// fallback, and getting that wrong is not a cosmetic bug. Run from a plain
+// shell there is no HERDR_SOCKET_PATH, so returning just the variable would
+// exclude nothing — and the local session would come back as a foreign one
+// with every local agent duplicated as a ragent row. A driving agent asking
+// "what is happening everywhere" would be told about the session it is
+// standing in, twice, under targets it is then refused permission to touch.
+func selfSocket(ctx context.Context, env *appEnv) string {
+	if path := env.getenv("HERDR_SOCKET_PATH"); path != "" {
+		return path
+	}
+	sessions, err := listSessions(ctx, sessionRunner(env.getenv))
+	if err != nil {
+		return ""
+	}
+	socket, _ := herdrx.DefaultRunningSocket(sessions)
+	return socket
 }
 
 // gitCacheTTL bounds how stale a branch name may get inside one long-lived
@@ -419,6 +529,22 @@ func renderRows(ctx context.Context, cfg config.Config, flags listFlags, src lis
 	} else {
 		raw = assembleBlocks(cfg.SortOrder, wsRows, agRows, dirRows, wtRows)
 	}
+
+	// Foreign rows go LAST, unconditionally, and take no part in the attention
+	// hoist above.
+	//
+	// A blocked agent in another session is genuinely blocked, so hoisting it
+	// is tempting — and wrong. The hoist exists so the cursor opens on
+	// something the user can act on with the very next keypress, and the one
+	// thing they cannot do to a foreign agent is answer it: no herdr call
+	// takes a session, so every mutating command refuses these rows. Putting
+	// an unanswerable row where the answerable one belongs would break the
+	// promise that makes the ordering worth having.
+	//
+	// SESH_BRO_SORT_ORDER does not govern them either, for the same reason the
+	// counts row is not a block: they are a separate view of a separate
+	// machine-local world, not a fourth source competing for the same space.
+	raw = append(raw, foreignRows(src)...)
 
 	// Git enrichment: sesh-bro:235-265, BEHAVIOUR.md §2.2.8 — JSON output
 	// skips it entirely (§2.2.9).
@@ -567,6 +693,19 @@ type jsonRow struct {
 	Status string `json:"status"`
 	Label  string `json:"label"`
 	Detail string `json:"detail"`
+	// Session names the herdr session a foreign row lives in, and is OMITTED
+	// for local rows.
+	//
+	// omitempty rather than an always-present empty string, because every
+	// existing consumer of this shape predates multi-session and S8 pins the
+	// bash-parity output byte for byte. A local row must keep emitting exactly
+	// the five keys it always has; the sixth appears only where it means
+	// something.
+	//
+	// It duplicates what the composed target already carries, on purpose: a
+	// consumer should not have to know the separator, or that there is one,
+	// to answer "can I act on this row".
+	Session string `json:"session,omitempty"`
 }
 
 // writeJSONRows reproduces sesh-bro:268 (BEHAVIOUR.md §2.2.9, §9 S8): each
@@ -593,11 +732,12 @@ func writeJSONLRows(w io.Writer, rows []herdrx.Row) {
 		// Errors here mean w is broken, which the caller will discover from
 		// its own writer; there is nothing useful to do per row.
 		_ = enc.Encode(jsonRow{
-			Type:   string(r.Type),
-			Target: r.Target,
-			Status: r.Status,
-			Label:  r.Label,
-			Detail: r.Detail,
+			Type:    string(r.Type),
+			Target:  r.Target,
+			Status:  r.Status,
+			Label:   r.Label,
+			Detail:  r.Detail,
+			Session: r.Session,
 		})
 	}
 }
@@ -612,11 +752,12 @@ func writeJSONRows(w io.Writer, rows []herdrx.Row) {
 		// about that from here (bash's own `printf | jq` has the identical
 		// property: a broken stdout pipe just truncates the output).
 		_ = enc.Encode(jsonRow{
-			Type:   string(r.Type),
-			Target: r.Target,
-			Status: r.Status,
-			Label:  r.Label,
-			Detail: r.Detail,
+			Type:    string(r.Type),
+			Target:  r.Target,
+			Status:  r.Status,
+			Label:   r.Label,
+			Detail:  r.Detail,
+			Session: r.Session,
 		})
 	}
 }
@@ -672,4 +813,16 @@ func expandViewDir(args []string) []string {
 		}
 	}
 	return out
+}
+
+// foreignRows renders the other-session block, or nothing at all.
+//
+// Nothing is the overwhelmingly common case: one session is the normal setup,
+// --all-sessions is opt-in, and a machine with no second session pays not one
+// extra socket dial for the feature existing.
+func foreignRows(src listSources) []herdrx.Row {
+	if !src.allSessions || len(src.foreign) == 0 {
+		return nil
+	}
+	return herdrx.ForeignRows(src.foreign)
 }

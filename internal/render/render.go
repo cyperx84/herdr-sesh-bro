@@ -53,6 +53,11 @@ func StatusColor(status string) string {
 		// have not opened, the other is any directory you have visited — is
 		// exactly what the colour has to carry.
 		return "\x1b[35m"
+	case "session":
+		// Bright black, the same dim the unknown status gets. A whole other
+		// session is context, not something demanding attention, and it must
+		// not compete with the agent rows above it for the eye.
+		return "\x1b[90m"
 	default:
 		return "\x1b[90m"
 	}
@@ -68,6 +73,8 @@ type Icons struct {
 	Agent     string
 	Dir       string
 	Worktree  string
+	Session   string
+	RAgent    string
 }
 
 // DefaultIcons returns bash's built-in glyphs (sesh-bro lines 43-45), used
@@ -90,6 +97,14 @@ const (
 	// picking one does — open a workspace there — and it carries the same "-"
 	// status placeholder, having no agent of its own.
 	KindWorktree Kind = "worktree"
+	// KindSession is another herdr session, and KindRAgent an agent inside
+	// one. Both are READ-ONLY: no herdr API call takes a session, so every
+	// call lands on the daemon it dialled, and focusing or prompting one of
+	// these would change a session the user cannot see
+	// (docs/MULTI-SESSION.md). The only action either offers is opening a
+	// terminal attached to that session.
+	KindSession Kind = "session"
+	KindRAgent  Kind = "ragent"
 )
 
 // FormatRow renders one `list` row exactly as bash's row-render loop does
@@ -125,6 +140,14 @@ func FormatRow(kind Kind, target, status, label, detail string, icons Icons) (st
 		color, glyph = StatusColor("dir"), icons.Dir
 	case KindWorktree:
 		color, glyph = StatusColor("worktree"), icons.Worktree
+	case KindSession:
+		color, glyph = StatusColor("session"), icons.Session
+	case KindRAgent:
+		// An agent's own status colour, because that is the information the
+		// row carries and dimming it would hide the blocked one. The GLYPH is
+		// what says "not here": a hollow ring against the local agent's solid
+		// dot, so the two never read as the same thing at a glance.
+		color, glyph = StatusColor(status), icons.RAgent
 	default:
 		// Unreachable from bash's own list builder: only these three kinds
 		// are ever produced (BEHAVIOUR.md §4.1). Bash's equivalent `case`
@@ -358,4 +381,32 @@ const HeaderRowKind = "header"
 // that was already updating the list.
 func HeaderRow(line string) string {
 	return HeaderRowKind + "\t-\t" + line + "\n"
+}
+
+// PreviewSessionHeader names another herdr session and the version its daemon
+// is running. The version is there because a session on a different herdr can
+// disagree about what a status means, and a preview that hid that would make
+// the disagreement look like a bug in this plugin.
+func PreviewSessionHeader(name, version string) string {
+	return StatusColor("session") + "▣ " + name + Reset + "  " + Dim + "herdr " + version + Reset + "\n\n"
+}
+
+// PreviewSessionAgentLine renders one agent inside another session.
+func PreviewSessionAgentLine(status, label, detail string) string {
+	return StatusColor(status) + "○ " + label + Reset + "  " + Dim + detail + Reset + "\n"
+}
+
+// PreviewSessionFooter says what Enter will do, because it is the one row in
+// the picker whose action is not "go there" but "open a whole new window".
+// Surprising the user with a new terminal is worse than telling them first.
+func PreviewSessionFooter(name string) string {
+	return "\n" + Dim + "enter opens a terminal attached to " + name + Reset + "\n"
+}
+
+// PreviewSessionUnreachable is what a session that will not answer looks like.
+// It is a normal state, not an error: a session shutting down, or one whose
+// socket outlived its daemon, and the preview says so plainly rather than
+// rendering a failure the user can do nothing about.
+func PreviewSessionUnreachable(name string) string {
+	return Dim + "(session " + name + " is not answering)" + Reset + "\n"
 }

@@ -41,6 +41,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/cyperx84/herdr-sesh-bro/internal/picker"
 	"github.com/cyperx84/herdr-sesh-bro/internal/render"
@@ -101,6 +102,8 @@ type Config struct {
 	IconAgent     string
 	IconDir       string
 	IconWorktree  string
+	IconSession   string
+	IconRAgent    string
 
 	// KeyWorkspaces, KeyAgents, KeyBlocked, KeyDirs, KeyAll, KeyCreate,
 	// KeyClose are SESH_BRO_KEY_WORKSPACES/AGENTS/BLOCKED/DIRS/ALL/CREATE/
@@ -124,9 +127,14 @@ type Config struct {
 	KeyWorktrees  string
 	KeyStar       string
 	KeyReply      string
-	KeyAll        string
-	KeyCreate     string
-	KeyClose      string
+
+	// foreignIntervalRaw holds SESH_BRO_FOREIGN_INTERVAL, a duration.
+	foreignIntervalRaw string
+	// allSessionsRaw holds SESH_BRO_ALL_SESSIONS.
+	allSessionsRaw string
+	KeyAll         string
+	KeyCreate      string
+	KeyClose       string
 
 	// previewEnabledRaw, hideCurrentRaw, dirSourcesRaw hold
 	// CFG_PREVIEW_ENABLED/HIDE_CURRENT/DIR_SOURCES after the resolution
@@ -189,6 +197,8 @@ func Load(getenv func(string) string) Config {
 		IconAgent:          orDefault(getenv("SESH_BRO_ICON_AGENT"), "●"),
 		IconDir:            orDefault(getenv("SESH_BRO_ICON_DIR"), "▸"),
 		IconWorktree:       orDefault(getenv("SESH_BRO_ICON_WORKTREE"), "⑂"),
+		IconSession:        orDefault(getenv("SESH_BRO_ICON_SESSION"), "▣"),
+		IconRAgent:         orDefault(getenv("SESH_BRO_ICON_RAGENT"), "○"),
 		KeyWorkspaces:      orDefault(getenv("SESH_BRO_KEY_WORKSPACES"), "ctrl-w"),
 		KeyAgents:          orDefault(getenv("SESH_BRO_KEY_AGENTS"), "ctrl-e"),
 		KeyBlocked:         orDefault(getenv("SESH_BRO_KEY_BLOCKED"), "ctrl-b"),
@@ -196,6 +206,8 @@ func Load(getenv func(string) string) Config {
 		KeyWorktrees:       orDefault(getenv("SESH_BRO_KEY_WORKTREES"), "ctrl-t"),
 		KeyStar:            orDefault(getenv("SESH_BRO_KEY_STAR"), "ctrl-s"),
 		KeyReply:           orDefault(getenv("SESH_BRO_KEY_REPLY"), "ctrl-y"),
+		foreignIntervalRaw: orDefault(getenv("SESH_BRO_FOREIGN_INTERVAL"), "5s"),
+		allSessionsRaw:     orDefault(getenv("SESH_BRO_ALL_SESSIONS"), "0"),
 		KeyAll:             orDefault(getenv("SESH_BRO_KEY_ALL"), "ctrl-o"),
 		KeyCreate:          orDefault(getenv("SESH_BRO_KEY_CREATE"), "ctrl-/"),
 		KeyClose:           orDefault(getenv("SESH_BRO_KEY_CLOSE"), "alt-x"),
@@ -314,6 +326,8 @@ func (c Config) Icons() render.Icons {
 		Agent:     c.IconAgent,
 		Dir:       c.IconDir,
 		Worktree:  c.IconWorktree,
+		Session:   c.IconSession,
+		RAgent:    c.IconRAgent,
 	}
 }
 
@@ -372,4 +386,40 @@ func (c Config) DefaultFilterFlag() (flag string, ok bool) {
 	}
 	flag, ok = defaultFilterFlags[c.DefaultFilter]
 	return flag, ok
+}
+
+// ForeignInterval is how stale other sessions' rows may get before they are
+// re-fetched, and 0 disables cross-session rows entirely.
+//
+// A duration rather than a count of seconds, because this is the one knob in
+// the project whose right value depends on how much someone dislikes the
+// traffic: "5s" and "0" and "2m" are all reasonable answers, and a bare
+// integer would make the unit a thing to remember.
+//
+// It is a poll, deliberately and uniquely. Foreign sessions emit their events
+// to their own sockets, so following them properly means one global
+// subscription per session plus one per-pane subscription per foreign agent —
+// O(sessions × panes) held connections for a secondary view. See
+// internal/live's package comment.
+//
+// A malformed value is an error rather than a silent fallback, matching every
+// other config bool here: a picker that quietly ignored the number you set is
+// worse than one that tells you the number is wrong.
+func (c Config) ForeignInterval() (time.Duration, error) {
+	d, err := time.ParseDuration(c.foreignIntervalRaw)
+	if err != nil {
+		return 0, fmt.Errorf("sesh-bro: SESH_BRO_FOREIGN_INTERVAL: invalid duration %q", c.foreignIntervalRaw)
+	}
+	return d, nil
+}
+
+// AllSessions reports whether other sessions' read-only rows are shown without
+// being asked for.
+//
+// Default OFF, unlike most things in this project that default to useful. One
+// session is the normal setup, and for that user the flag being on costs a
+// `herdr session list` on every source load to discover there is nothing to
+// show. It is opt-in for the people who actually run two.
+func (c Config) AllSessions() (bool, error) {
+	return ParseBoolFlag("SESH_BRO_ALL_SESSIONS", c.allSessionsRaw)
 }

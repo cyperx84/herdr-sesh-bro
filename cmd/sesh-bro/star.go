@@ -63,6 +63,13 @@ func cmdStar(ctx context.Context, env *appEnv, args []string) int {
 		fmt.Fprintln(env.stderr, "sesh-bro: star: needs an agent name or pane id (or --list)")
 		return output.ExitUsage
 	}
+	if err := refuseForeign("star", target); err != nil {
+		fmt.Fprintln(env.stderr, err)
+		if asJSON {
+			_ = output.Emit(env.stdout, output.Failure("star", err))
+		}
+		return output.ExitUsage
+	}
 
 	// Resolve the target through the live session so the stored identity
 	// matches what the row layer will look up. Starring by a name the picker

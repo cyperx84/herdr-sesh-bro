@@ -140,6 +140,18 @@ func cmdPrompt(ctx context.Context, env *appEnv, args []string) int {
 		targets = flags.targets
 	}
 
+	// One foreign target poisons the batch rather than being skipped: a
+	// caller that asked to prompt five agents and got four, silently, has
+	// been lied to about what happened. --all-blocked and --from-file can
+	// only produce local targets anyway, so in practice this fires exactly
+	// when someone typed one.
+	for _, t := range targets {
+		if err := refuseForeign("prompt", t); err != nil {
+			writePromptOutput(env, flags.asJSON, false, nil, err.Error())
+			return 2
+		}
+	}
+
 	results := make([]map[string]any, 0, len(targets))
 	allOK := true
 	for _, target := range targets {

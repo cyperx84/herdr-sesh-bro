@@ -26,6 +26,14 @@ import (
 )
 
 type countsFlags struct {
+	// allSessions folds every other running session's agents into the counts.
+	//
+	// Opt-in, and it stays that way: counts repaints in the tab bar every two
+	// seconds, so dialling one socket per session per paint is real, constant
+	// traffic for a number that changes rarely. The local session is the one
+	// whose agents the user can act on with a keypress, and that is what the
+	// tab bar is for.
+	allSessions bool
 	ansi        bool
 	asJSON      bool
 	includeZero bool
@@ -41,6 +49,8 @@ func parseCountsFlags(args []string) (countsFlags, error) {
 			f.asJSON = true
 		case "--all":
 			f.includeZero = true
+		case "--all-sessions":
+			f.allSessions = true
 		default:
 			return f, fmt.Errorf("sesh-bro: counts: unknown flag: %s", a)
 		}
@@ -70,7 +80,21 @@ func cmdCounts(ctx context.Context, env *appEnv, args []string) int {
 		return 1
 	}
 
-	counts := herdrx.CountByStatus(snap.Agents)
+	agents := snap.Agents
+	if flags.allSessions {
+		// Failures contribute nothing rather than failing the command: a tab
+		// bar that blanks because another session is shutting down is exactly
+		// the "no agents versus no herdr" ambiguity the dependency gate above
+		// exists to prevent, arriving through a different door.
+		for _, fs := range fetchForeign(ctx, env, selfSocket(ctx, env)) {
+			if fs.Err != nil {
+				continue
+			}
+			agents = append(agents, fs.Snapshot.Agents...)
+		}
+	}
+
+	counts := herdrx.CountByStatus(agents)
 	if flags.asJSON {
 		// Every status is present in JSON, including zeros: a consumer
 		// indexing the object should not have to distinguish absent from

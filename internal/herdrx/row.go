@@ -48,6 +48,22 @@ type Row struct {
 	// cannot serve here: it is the agent NAME when one exists, and the
 	// recorded time-in-state is keyed by pane.
 	PaneID string
+	// Session names the herdr session this row lives in, and is EMPTY for
+	// every row in the session the picker is running in.
+	//
+	// Empty-means-local rather than always naming the session, because the
+	// emptiness is the test every mutating command makes: a non-empty Session
+	// is a row that cannot be focused, prompted or closed, since no herdr API
+	// call takes a session and every call therefore lands on whichever daemon
+	// it dialled (docs/MULTI-SESSION.md). Making local the zero value means a
+	// command that forgets to check gets the safe answer for the rows that
+	// make up almost every picker.
+	//
+	// It is deliberately NOT a fourth TSV field. Adding one would touch
+	// --with-nth, --id-nth, cutField, the header row, the preview bind and
+	// every reload path, for information the target already carries after
+	// ForeignTarget composes it.
+	Session string
 }
 
 // NormalizeStatus maps an absent/empty agent_status to "unknown", matching

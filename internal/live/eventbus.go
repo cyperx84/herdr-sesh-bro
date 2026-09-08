@@ -7,6 +7,26 @@
 // session means one global subscription for topology changes plus one per-pane
 // subscription for every pane that has an agent, opened and closed as panes
 // come and go.
+//
+// # The one exception, stated here so the sentence above stays true
+//
+// That applies to THIS session, which is the only one this package watches.
+// Other sessions' rows (0.7.0, SESH_BRO_ALL_SESSIONS) are POLLED, on a TTL
+// that defaults to five seconds, and the code for it is deliberately not in
+// here.
+//
+// The reason is the arithmetic above, applied across sessions. Each foreign
+// session would need the same one global subscription plus one per-pane
+// subscription per agent — O(sessions × panes) held connections, for a view
+// the user is not acting through: foreign rows are read-only, because no herdr
+// API call takes a session parameter. Paying a per-agent held connection for a
+// row nobody can press a key on is the wrong trade, and a five-second TTL on a
+// secondary view is not a fidelity anyone notices.
+//
+// Local rows keep their event-driven push, unchanged. If that ever stops being
+// true, this comment is the thing to correct — an anti-polling position stated
+// absolutely, while the code polls, is how a codebase starts lying about
+// itself.
 package live
 
 import (

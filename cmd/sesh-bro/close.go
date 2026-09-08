@@ -83,8 +83,16 @@ func closeRow(ctx context.Context, env *appEnv, client *herdrx.Client, openErr e
 	switch kind {
 	case "workspace":
 		return closeWorkspaceRow(ctx, env, client, openErr, target)
-	case "agent", "dir":
+	case "agent", "dir", "worktree":
 		fmt.Fprintf(env.stderr, "sesh-bro: cannot close a %s row; only workspaces can be closed\n", kind)
+		return nil
+	case "session", "ragent":
+		// Read-only, and this is the row where the rule matters most. A
+		// foreign workspace id would be closed against the LOCAL daemon,
+		// where it either misses or destroys a same-named workspace of the
+		// user's — silently, since ids are scoped to one server and two
+		// sessions can hold the same one.
+		fmt.Fprintf(env.stderr, "sesh-bro: %s rows are read-only; another session's workspaces can only be closed from inside it\n", kind)
 		return nil
 	default:
 		fmt.Fprintf(env.stderr, "sesh-bro close: unknown type %s\n", kind)

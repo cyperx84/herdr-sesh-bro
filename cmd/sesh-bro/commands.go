@@ -66,6 +66,8 @@ var commands = []commandSpec{
 		Headless: true, Run: cmdReply},
 	{Name: "explain", Args: "TARGET", Summary: "why herdr says an agent is blocked, working or idle",
 		Headless: true, Run: cmdExplain},
+	{Name: "sessions", Args: "[--running]", Summary: "list herdr sessions on this machine",
+		Headless: true, Run: cmdSessions},
 	{Name: "wait", Args: "--target A [--until S] [--timeout D]", Summary: "block until an agent settles; exit 3 on timeout",
 		Headless: true, Run: cmdWait},
 	{Name: "read", Args: "TARGET [--source S]", Summary: "print what an agent's pane shows (--source recent-unwrapped for scrollback)",

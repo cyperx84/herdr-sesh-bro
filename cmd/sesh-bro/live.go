@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/cyperx84/herdr-sesh-bro/internal/config"
 	"github.com/cyperx84/herdr-sesh-bro/internal/fzfctl"
@@ -57,7 +58,52 @@ func startLiveUpdates(ctx context.Context, env *appEnv, cfg config.Config, dir s
 	}}
 	go func() { _ = w.Run(ctx, client.Raw(), panes) }()
 
+	startForeignTicker(ctx, cfg, initial.allSessions, r)
+
 	return cancel
+}
+
+// startForeignTicker re-renders on a clock so other sessions' rows go stale.
+//
+// This is the project's one poll, and it exists only because the alternative
+// is worse: foreign sessions emit their events to their own sockets, so
+// following them means one global subscription per session plus one per-pane
+// subscription per foreign agent — O(sessions × panes) held connections for
+// rows that are read-only anyway. internal/live's package comment carries the
+// full argument.
+//
+// It starts only when there is something to poll FOR. On the ordinary
+// one-session machine with the feature off, no goroutine and no timer exists,
+// so the cost of the feature to someone not using it is zero rather than
+// small.
+func startForeignTicker(ctx context.Context, cfg config.Config, allSessions bool, r *renderer) {
+	if !allSessions {
+		return
+	}
+	interval, err := cfg.ForeignInterval()
+	if err != nil || interval <= 0 {
+		return
+	}
+	go func() {
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				// Tick renders are FOREIGN-ONLY in intent, so they must not
+				// pay the local costs a real event pays. renderAll's source
+				// reuse is what makes that true: the git cache and zoxide list
+				// come back from prev untouched, and only the foreign TTL has
+				// lapsed. Without that, a five-second tick would respawn
+				// `git status` per workspace forever, because gitCacheTTL is
+				// also five seconds — a background process quietly running git
+				// on every repo you have open, for a row in another session.
+				_, _ = r.render(ctx, true, true)
+			}
+		}
+	}()
 }
 
 // renderer writes every view's rows to disk and pushes the visible one into
@@ -84,13 +130,19 @@ type renderer struct {
 // view actually changed, pushes a reload. It returns the agent panes seen, for
 // the watcher's initial subscription set.
 func (r *renderer) renderAll(ctx context.Context, push bool) ([]string, error) {
+	return r.render(ctx, push, false)
+}
+
+// render is renderAll with the foreign-tick distinction made explicit. See
+// refreshSources' keepGit parameter for what the distinction buys.
+func (r *renderer) render(ctx context.Context, push, foreignTick bool) ([]string, error) {
 	// One snapshot serves every view: sources are read for the union of what
 	// any view needs, and each view is then a pure re-render of it. The
 	// daemon-liveness gate is deliberately skipped — this is driven by an
 	// event that came FROM the daemon, so re-proving it is alive costs a
 	// round trip to learn nothing.
-	unionFlags := listFlags{wantWS: true, wantAgent: true, wantDir: true, header: true}
-	src, err := refreshSources(ctx, r.env, r.cfg, unionFlags, r.prev)
+	unionFlags := listFlags{wantWS: true, wantAgent: true, wantDir: true, wantWorktree: true, header: true}
+	src, err := refreshSources(ctx, r.env, r.cfg, unionFlags, r.prev, foreignTick)
 	if err != nil {
 		return nil, err
 	}
