@@ -156,6 +156,30 @@ row does nothing. Edit the replies one per line in `replies.txt` beside the
 state file. There is no key that answers every blocked agent at once, on
 purpose.
 
+## Other sessions
+
+Set `SESH_BRO_ALL_SESSIONS=1` (or pass `--all-sessions`) and the picker gains a
+row for every other running herdr session, plus one per agent inside them.
+
+They are **read-only**, and that is structural rather than cautious. A herdr
+session is a daemon: N sessions are N server processes with N sockets, and no
+herdr API call takes a session parameter, so every call lands on whichever
+socket it dialled. Prompting a foreign agent would not fail — it would act on
+the local session instead, possibly on a same-named agent of yours, and report
+success. So `prompt`, `reply`, `star`, `close`, `connect`, `read` and `explain`
+all refuse a foreign target with exit 2 and name the session it is in.
+
+`enter` on a foreign row does the one thing that works: opens a terminal
+running `herdr session attach`. Configure it with `SESH_BRO_ATTACH_CMD`, a
+shell command containing `{session}`. macOS defaults to Ghostty. Other
+platforms must set it — terminal emulators vary too much for a default to be
+right, and a wrong one opens nothing while looking like it worked.
+
+Foreign rows refresh on a timer rather than by subscription
+(`SESH_BRO_FOREIGN_INTERVAL`, default `5s`, `0` disables). It is the only poll
+in sesh-bro. Following other sessions properly would mean a held connection per
+foreign agent, for rows you cannot act on.
+
 > The keybinds deliberately avoid `^a` (Herdr's prefix) and `^h/j/k/l`
 > (vim-herdr-navigation / tmux pane keys) so they never fight your editor
 > or window-manager chords.
@@ -351,6 +375,11 @@ schema exposes. Set them in your shell, or via Herdr's config UI:
 | `SESH_BRO_KEY_STAR` | `ctrl-s` | Pin the highlighted agent |
 | `SESH_BRO_KEY_REPLY` | `ctrl-y` | Send canned reply 1 to a blocked agent |
 | `SESH_BRO_KEY_ALL` | `ctrl-o` | Reload: all sources |
+| `SESH_BRO_ALL_SESSIONS` | `0` | Show other sessions' read-only rows |
+| `SESH_BRO_FOREIGN_INTERVAL` | `5s` | How stale foreign rows may get; `0` disables them |
+| `SESH_BRO_ATTACH_CMD` | Ghostty on macOS | Terminal command to attach a session; must contain `{session}` |
+| `SESH_BRO_ICON_SESSION` | `▣` | Glyph for a session row |
+| `SESH_BRO_ICON_RAGENT` | `○` | Glyph for an agent in another session |
 | `SESH_BRO_KEY_CLOSE` | `alt-x` | Close the highlighted workspace |
 | `SESH_BRO_KEY_CREATE` | `ctrl-/` | Create a workspace from a directory |
 | `SESH_BRO_ALIASES` | *(empty)* | `alias=label:alias2=label2` prefill queries |

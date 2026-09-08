@@ -17,6 +17,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A one-string mismatch presented as "the update broke my keybinds". Both
   wordings are now matched, so the toggle works on 0.8.x and 0.9.0 alike.
 
+## [0.7.0] - 2026-09-08
+
+The theme: seeing further. Why an agent is blocked, and what is happening in
+the other sessions on this machine.
+
+### Added
+- **`explain TARGET`** reports why herdr classified an agent the way it did.
+  herdr runs a prioritised rule set against what a pane shows and one rule
+  wins; `blocked` alone says an agent wants a human, while
+  `bash_permission_prompt` says it is waiting on a command approval and
+  `mcp_elicitation_prompt` says something quite different is being asked. The
+  picker shows the winning rule as one dim line under the agent preview header.
+  Needs herdr 0.9.0; older daemons degrade to saying less.
+- **Other sessions, read-only.** `--all-sessions` (or `SESH_BRO_ALL_SESSIONS=1`)
+  adds a `session` row per other running herdr session and a `ragent` row per
+  agent inside it, targets composed as `<id>@<session>`. `sessions` lists them
+  headlessly, `counts --all-sessions` folds them into the tab-bar counts, and
+  `--jsonl` rows carry an omitempty `session` key.
+- **`connect session NAME`** opens a terminal running `herdr session attach`,
+  via `SESH_BRO_ATTACH_CMD` (`{session}` placeholder). It is the only thing
+  that actually moves a human between sessions.
+- **`SESH_BRO_KEY_WORKTREES`, `SESH_BRO_KEY_STAR`** are honoured, along with the
+  new `SESH_BRO_ALL_SESSIONS`, `SESH_BRO_FOREIGN_INTERVAL`,
+  `SESH_BRO_ATTACH_CMD`, `SESH_BRO_ICON_SESSION` and `SESH_BRO_ICON_RAGENT`.
+
+### Refused, structurally
+Every command that acts on a target refuses a foreign one with exit 2. No herdr
+API call takes a session parameter, so a foreign target does not fail — it acts
+on the local session instead, possibly on a same-named agent, and reports
+success. That includes `read` and `explain`, which only look.
+
+Foreign rows are also not attention-hoisted. A blocked agent over there is
+genuinely blocked, but the hoist exists so the cursor opens on something
+answerable with the next keypress, and that is the one thing a foreign agent is
+not.
+
+### Fixed
+- **The live picker's worktrees view rendered empty on every event push.** Its
+  union flags never asked for worktrees, so only a cold `list` ever produced
+  them.
+- **A foreign-tick render no longer respawns `git status`.** The git cache TTL
+  and the default foreign interval are both five seconds, so the new ticker
+  would otherwise have run git across every open repo, forever, to refresh a
+  row nobody can act on.
+
+### Note on `done`
+herdr's detection rules only ever produce `working`, `blocked`, `idle` or
+`unknown`. `done` is derived above them as "idle with work you have not looked
+at", so a `done` agent explains as `idle`. The preview line omits the state for
+that reason; the command keeps it.
+
 ## [0.6.0] - 2026-09-07
 
 The theme: acting on agents, not just finding them. Everything here is a

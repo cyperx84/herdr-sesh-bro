@@ -1,6 +1,6 @@
 id = "sesh-bro"
 name = "Sesh Bro"
-version = "0.6.0"
+version = "0.7.0"
 min_herdr_version = "0.8.2"
 # 0.8.2 is the floor because popup.close and session.snapshot are only
 # confirmed present in the 0.8.2 API schema — the popup toggle (0.4.0) and

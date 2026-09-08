@@ -95,3 +95,56 @@ across sessions, because the API does not allow it.
 
 `herdr api schema --json` is 255 KB and contains raw control characters — `jq`
 fails on it. Parse with Python's `json.loads(..., strict=False)`.
+
+## Addendum — 2026-09-08, re-verified against herdr 0.9.0 (protocol 22)
+
+herdr moved from 0.8.2 (protocol 20) to 0.9.0 (protocol 22) between this
+document being written and the feature being built, so the finding it rests on
+was re-checked rather than assumed.
+
+**It holds.** The `session.*` namespace is still exactly one method,
+`session.snapshot`. The full method list is 109 entries and none of them takes
+a session or host parameter. The request schema does contain `session_id` —
+twice, in `PaneReportAgentParams` and `PaneReportAgentSessionParams`, both
+spelled `agent_session_id`, which is the CODING AGENT's own identity (Claude's
+conversation UUID and the like), not a herdr session. Anyone re-checking this
+should grep for that and not stop at the match.
+
+New in protocol 22 and worth knowing, none of which changes the conclusion:
+
+- `server.live_handoff` sounds like it might move a session between clients. It
+  does not: its parameters are `import_exe`, `expected_version` and
+  `expected_protocol`. It is for replacing the server binary in place.
+- `agent.explain` reports which detection rule classified a pane, and is what
+  0.7.0's `explain` command and the picker's "why:" preview line are built on.
+- `herdr machine list` manages saved SSH connection profiles. herdr's own skill
+  file is explicit that selecting one "does not retarget commands running in
+  your pane: they still use the inherited session and socket context" — the
+  same wall, one layer out.
+
+### The nested-herdr trap, which cost an hour
+
+Spawning a terminal to run `herdr session attach <name>` fails from inside a
+herdr pane, and the error names the wrong cause:
+
+```
+error: nested herdr is disabled by default.
+see configuration if you want to enable it.
+```
+
+It is not nesting. macOS `open` passes the caller's environment to the
+application it launches, so the spawned terminal inherits `HERDR_ENV=1` along
+with `HERDR_SOCKET_PATH`, `HERDR_PANE_ID` and the rest. herdr sees the flag and
+correctly refuses. The fix is to strip `HERDR_*` from the environment of the
+spawn, NOT to enable nested herdr in the user's config: a terminal attaching a
+different session genuinely is not nested, and it only looked that way because
+of variables that leaked.
+
+The same spawn must also give an absolute path to the herdr binary. A terminal
+launched by `open` starts with a login environment, and a Homebrew herdr is not
+dependably on it; the failure mode is a window that flashes open and closes,
+which reads as "the key does nothing".
+
+Both were found by spawning for real and reading the captured output, not by
+reasoning about it.
+
