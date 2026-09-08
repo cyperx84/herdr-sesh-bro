@@ -70,6 +70,36 @@ completion).
 Blocked and done are the two that want a human. Blocked, done and idle rows
 carry how long they have been that way, e.g. `claude · Fix the parser · 9m`.
 
+### Why is it blocked?
+
+```sh
+sesh-bro explain builder         # e.g. "blocked · bash_permission_prompt"
+sesh-bro explain builder --json
+```
+
+A `blocked` status says an agent wants a human. It does not say whether it is
+waiting on a bash command approval, an MCP elicitation, or a question inside a
+dynamic workflow. Those are three different asks with three different
+urgencies, and they render identically. herdr already knows which, because that
+is how it decided: it runs a prioritised rule set against what the pane shows,
+and one rule wins. `explain` reports the winner.
+
+Branch on the `rule` field, not on the human line. `region` says which part of
+the screen matched, and `manifest_version` identifies the ruleset — rule names
+are only meaningful relative to one, and herdr updates its manifests from a
+remote.
+
+Two things to know before you rely on it:
+
+- The rules only ever produce `working`, `blocked`, `idle` or `unknown`. There
+  is no `done` rule: herdr derives `done` above this layer as "idle with work
+  you have not looked at". So a `done` agent explains as `idle`, and both are
+  right.
+- `agent.explain` arrived in herdr 0.9.0. Against an older daemon this exits 1
+  with the method error rather than pretending there is nothing to say, so you
+  can tell "this herdr cannot answer" from "herdr looked and found nothing",
+  which exits 3.
+
 ### Watch and listen
 
 ```sh

@@ -219,6 +219,25 @@ func PreviewAgentHeader(status, name, cwd string) string {
 	return StatusColor(status) + "● " + name + Reset + "  " + Dim + status + " · " + cwd + Reset + "\n\n"
 }
 
+// PreviewAgentReason renders herdr's own account of WHY the agent is in this
+// state, on its own dim line under the header.
+//
+// The status word alone cannot distinguish a bash command waiting for approval
+// from an MCP elicitation from a question inside a dynamic workflow. All three
+// render as `blocked`, and they are not equally urgent. herdr decides between
+// them by running a prioritised rule set against the pane, so naming the rule
+// that won turns one word into an answer.
+//
+// Empty reason means empty output, not a line saying nothing: this is
+// best-effort enrichment from a method a 0.8.2 daemon does not have, and a
+// preview must look deliberate on a daemon that cannot answer.
+func PreviewAgentReason(reason string) string {
+	if reason == "" {
+		return ""
+	}
+	return Dim + "why: " + reason + Reset + "\n\n"
+}
+
 // PreviewDirHeader renders the `preview dir` header (sesh-bro line 475).
 // Bash spells the colour as a literal ESC[36m rather than calling
 // status_color, but it is the identical escape StatusColor("dir") returns.

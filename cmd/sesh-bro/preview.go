@@ -105,6 +105,19 @@ func previewAgent(ctx context.Context, env *appEnv, client *herdrx.Client, openE
 	}
 	fmt.Fprint(env.stdout, render.PreviewAgentHeader(status, name, ag.CWD))
 
+	// Why herdr says that, when it can tell us. One extra RPC, and the preview
+	// is the one place in the picker where that is affordable: it runs for the
+	// highlighted row only, not for every row on every render, so this cannot
+	// become the per-event RPC storm §10 spent 0.4.1 removing.
+	//
+	// Errors are swallowed on purpose. agent.explain arrived in herdr 0.9.0
+	// and the plugin still supports 0.8.2, where the method does not exist; a
+	// preview that failed, or printed a diagnostic about an unsupported
+	// method, would be worse on that daemon than one that simply says less.
+	if ex, err := client.ExplainAgent(ctx, target); err == nil {
+		fmt.Fprint(env.stdout, render.PreviewAgentReason(ex.Summary()))
+	}
+
 	text, err := readAgentANSI(ctx, client, openErr, target)
 	if err != nil {
 		return 1
