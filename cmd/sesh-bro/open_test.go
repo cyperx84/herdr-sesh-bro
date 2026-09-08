@@ -91,31 +91,50 @@ func shellSingleQuote(s string) string {
 // stack a second popup, and before 0.4.0 that refusal simply surfaced as an
 // error while the popup stayed put — so opening and closing were different
 // gestures for one thing.
+// Both wordings, because herdr 0.9.0 reworded the refusal and the manifest
+// still supports 0.8.2. Recognising only the 0.8.x phrasing leaves the popup
+// permanently up on 0.9.0.
 func TestOpenTogglesClosedWhenPopupAlreadyOpen(t *testing.T) {
-	s := herdrtest.Start(t)
-	s.Handle("popup.close", func(json.RawMessage) (any, error) { return map[string]any{}, nil })
+	for _, tc := range []struct {
+		name    string
+		refusal string
+	}{
+		{
+			name:    "herdr 0.8.x",
+			refusal: `{"error":{"code":"plugin_pane_open_failed","message":"popup already open"},"id":"cli:plugin"}`,
+		},
+		{
+			name:    "herdr 0.9.0",
+			refusal: `{"error":{"code":"ui_busy","message":"a popup pane is already open"},"id":"cli:plugin"}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := herdrtest.Start(t)
+			s.Handle("popup.close", func(json.RawMessage) (any, error) { return map[string]any{}, nil })
 
-	herdrBin := fakeHerdrScript(t, "",
-		`{"error":{"code":"plugin_pane_open_failed","message":"popup already open"},"id":"cli:plugin"}`, 1)
+			herdrBin := fakeHerdrScript(t, "", tc.refusal, 1)
 
-	var stdout, stderr bytes.Buffer
-	code := run([]string{"open"}, strings.NewReader(""), &stdout, &stderr, fakeEnv(map[string]string{
-		"HERDR_SOCKET_PATH": s.Path(),
-		"HERDR_BIN_PATH":    herdrBin,
-	}))
-	if code != 0 {
-		t.Fatalf("code = %d, want 0 — a toggle is a success (stderr: %q)", code, stderr.String())
-	}
-	if len(s.Calls("popup.close")) != 1 {
-		t.Errorf("popup.close calls = %d, want 1", len(s.Calls("popup.close")))
-	}
-	if strings.Contains(stderr.String(), "popup already open") {
-		t.Errorf("herdr's refusal leaked to the user: %q", stderr.String())
+			var stdout, stderr bytes.Buffer
+			code := run([]string{"open"}, strings.NewReader(""), &stdout, &stderr, fakeEnv(map[string]string{
+				"HERDR_SOCKET_PATH": s.Path(),
+				"HERDR_BIN_PATH":    herdrBin,
+			}))
+			if code != 0 {
+				t.Fatalf("code = %d, want 0 — a toggle is a success (stderr: %q)", code, stderr.String())
+			}
+			if len(s.Calls("popup.close")) != 1 {
+				t.Errorf("popup.close calls = %d, want 1", len(s.Calls("popup.close")))
+			}
+			if strings.Contains(stderr.String(), "already open") {
+				t.Errorf("herdr's refusal leaked to the user: %q", stderr.String())
+			}
+		})
 	}
 }
 
-// Any OTHER open failure must still surface. plugin.pane.open reports
-// "already open" with the same error code it uses for unrelated failures, so
+// Any OTHER open failure must still surface. Neither version's error code is
+// specific to "already open" — 0.8.x reused plugin_pane_open_failed for
+// unrelated failures and 0.9.0's ui_busy covers other UI-busy refusals — so
 // matching on the code rather than the message would turn every failed open
 // into a close.
 func TestOpenForwardsOtherFailures(t *testing.T) {
@@ -123,7 +142,7 @@ func TestOpenForwardsOtherFailures(t *testing.T) {
 	s.Handle("popup.close", func(json.RawMessage) (any, error) { return map[string]any{}, nil })
 
 	herdrBin := fakeHerdrScript(t, "",
-		`{"error":{"code":"plugin_pane_open_failed","message":"ui_busy"},"id":"cli:plugin"}`, 1)
+		`{"error":{"code":"plugin_pane_open_failed","message":"pane spawn failed"},"id":"cli:plugin"}`, 1)
 
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"open"}, strings.NewReader(""), &stdout, &stderr, fakeEnv(map[string]string{
@@ -133,7 +152,7 @@ func TestOpenForwardsOtherFailures(t *testing.T) {
 	if code == 0 {
 		t.Error("code = 0, want the child's failure passed through")
 	}
-	if !strings.Contains(stderr.String(), "ui_busy") {
+	if !strings.Contains(stderr.String(), "pane spawn failed") {
 		t.Errorf("stderr = %q, want herdr's own error forwarded", stderr.String())
 	}
 	if len(s.Calls("popup.close")) != 0 {

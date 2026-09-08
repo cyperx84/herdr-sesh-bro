@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- The picker toggle works again on herdr 0.9.0. herdr reworded its refusal to
+  stack a second popup — `plugin_pane_open_failed` / "popup already open"
+  became `ui_busy` / "a popup pane is already open" — and `open` recognised
+  only the old wording, so the close branch never ran. The popup stayed up
+  permanently, every later press of the chord errored against it, and — because
+  an open popup holds the UI — every other herdr keybinding went dead with it.
+  A one-string mismatch presented as "the update broke my keybinds". Both
+  wordings are now matched, so the toggle works on 0.8.x and 0.9.0 alike.
+
 ## [0.6.0] - 2026-09-07
 
 The theme: acting on agents, not just finding them. Everything here is a

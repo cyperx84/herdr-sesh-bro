@@ -885,9 +885,10 @@ exec "$HERDR" plugin pane open --plugin "$plugin_id" --entrypoint picker
 - `exec` replaces the process: **herdr's stdout, stderr and exit code become sesh-bro's.**
   `[live, from herdr's own plugin log]`:
   - success → stdout `{"id":"cli:plugin","result":{"type":"ok"}}` + newline, exit 0
-  - popup already open → stderr
-    `{"error":{"code":"plugin_pane_open_failed","message":"popup already open"},"id":"cli:plugin"}`,
-    exit 1
+  - popup already open → stderr, exit 1. herdr reworded this in 0.9.0 and both
+    are still in scope, because `min_herdr_version` is 0.8.2:
+    - 0.8.x `{"error":{"code":"plugin_pane_open_failed","message":"popup already open"},"id":"cli:plugin"}`
+    - 0.9.0 `{"error":{"code":"ui_busy","message":"a popup pane is already open"},"id":"cli:plugin"}`
 - Because of `exec`, nothing after this point in the script ever runs.
 
 ---
@@ -1737,15 +1738,24 @@ time therefore hit herdr's refusal to stack a second popup and surfaced
 different gestures for something the user thinks of as one thing.
 
 herdr now runs as a child instead, and a failure whose output contains
-`popup already open` is answered with a `popup.close` call and exit 0. Every
-other outcome forwards herdr's stdout, stderr and exit code verbatim, so from
-the caller's side nothing else changed.
+`popup already open` **or** `popup pane is already open` is answered with a
+`popup.close` call and exit 0. Every other outcome forwards herdr's stdout,
+stderr and exit code verbatim, so from the caller's side nothing else changed.
 
-Two details that look like details and are not:
+Three details that look like details and are not:
 
-- The match is on the MESSAGE, not the error code. `plugin.pane.open` reports
-  this as `plugin_pane_open_failed`, the same code it uses for unrelated
-  failures, so keying on the code would turn every failed open into a close.
+- Both wordings are matched. herdr 0.9.0 reworded the refusal to `a popup pane
+  is already open`; 0.8.x says `popup already open`. Recognising only one of
+  them is not a degraded toggle but a stuck popup — the close branch never
+  runs, so the picker stays up and every later press of the chord errors
+  against it. An open popup holds the UI, so this takes every *other* herdr
+  keybinding down with it: observed in the field as "the update broke my
+  keybinds", with the picker the only thing actually at fault.
+- The match is on the MESSAGE, not the error code. Neither version's code is
+  specific to this case: 0.8.x reported `plugin_pane_open_failed`, the same
+  code it used for unrelated failures, and 0.9.0 reports `ui_busy`, which
+  likewise covers other "the UI is busy" refusals. Keying on the code would
+  turn every failed open into a close.
 - A `popup_not_open` error from the close is treated as success. Something
   closed the popup between herdr's refusal and this call, which is the state
   the user was asking for.
@@ -1835,7 +1845,7 @@ every idle agent above the workspace block and wreck the ordering.
 | `create` | created | not a directory; create failed; no path; missing dir | — |
 | `preview` | always, for `workspace`/`agent`/`dir`/unknown | missing args (`set -u`) | — |
 | `picker` | selection connected; ESC/abort; **`list` failed** (S16) | connect failed | — |
-| `open` | herdr's exit code (0 on success) | herdr's exit code (1 on "popup already open") | unknown flag |
+| `open` | herdr's exit code (0 on success; 0 on the already-open toggle) | herdr's exit code (unrelated open failures) | unknown flag |
 | `last` | focused | no previous workspace; focus failed | — |
 | `root` | focused/created | not in a git repo; focus/create failed | — |
 | `worktree` | focused or created | no URL; unrecognised URL; create failed | — |

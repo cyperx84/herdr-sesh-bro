@@ -107,11 +107,23 @@ func cmdOpen(env *appEnv, args []string) int {
 
 // isPopupAlreadyOpen recognises herdr's refusal to stack a second popup.
 //
-// Matching on the message rather than a code because plugin.pane.open reports
-// this as plugin_pane_open_failed — the same code it uses for unrelated
-// failures — so the code alone would turn any open error into a close.
+// Two wordings, because the refusal was reworded in herdr 0.9.0 and the
+// manifest's min_herdr_version floor is still 0.8.2:
+//
+//	0.8.x  {"code":"plugin_pane_open_failed","message":"popup already open"}
+//	0.9.0  {"code":"ui_busy","message":"a popup pane is already open"}
+//
+// Missing the second one is not a degraded toggle, it is a stuck popup: the
+// close branch never runs, so the picker stays up and every later press of
+// the chord just errors against it.
+//
+// Still matched on the message rather than the code. 0.8.x reported this as
+// plugin_pane_open_failed, the same code it used for unrelated failures; 0.9.0
+// reports ui_busy, which likewise covers other "the UI is busy" refusals. In
+// neither version does the code alone mean "a popup is already open".
 func isPopupAlreadyOpen(out string) bool {
-	return strings.Contains(out, "popup already open")
+	return strings.Contains(out, "popup already open") ||
+		strings.Contains(out, "popup pane is already open")
 }
 
 // isPopupNotOpen recognises popup.close's complaint that there was nothing to
