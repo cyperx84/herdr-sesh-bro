@@ -17,6 +17,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A one-string mismatch presented as "the update broke my keybinds". Both
   wordings are now matched, so the toggle works on 0.8.x and 0.9.0 alike.
 
+## [0.8.0] - 2026-09-08
+
+The theme: the picker's fifth source, and the only one that names work rather
+than a place.
+
+### Added
+- **Open GitHub issues as picker rows** (`alt-i`, or `list --issues`). Enter
+  creates a real git worktree on a branch for that issue and opens it as a
+  workspace labelled with the issue title, reusing the existing `worktree`
+  command so there is one path that does this, repository verification
+  included. The preview shows the full title and the URL.
+
+### How it stays fast
+gh is a network call, so it never runs on a render a keypress is waiting on.
+Issues are not in the default source set, so a bare `list` makes no network
+call. Inside a live picker the ten-minute disk cache is the only source, and a
+goroutine at picker start takes the one cold path and re-renders — so the view
+is populated the first time it is pressed, not the second. Empty results are
+cached too: "no open issues" cost a round trip to learn.
+
+### Not built
+**Pull requests**, though they were on the roadmap beside issues. `worktree`
+creates a fresh branch named for the number, which is right for an issue and
+wrong for a PR — a PR needs its own head branch checked out. A PR row with the
+issue Enter action would look right and do the wrong thing. It needs
+`gh pr checkout` semantics, which is a different action and a later release.
+
 ## [0.7.0] - 2026-09-08
 
 The theme: seeing further. Why an agent is blocked, and what is happening in

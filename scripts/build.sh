@@ -57,7 +57,7 @@ echo "sesh-bro: no Go toolchain on PATH — falling back to a prebuilt release b
 # ordinary test suite if VERSION here and the version in herdr-plugin.toml
 # drift apart, which is how this line came to say v0.3.0 for a tag that was
 # never cut.
-VERSION="v0.7.0"
+VERSION="v0.8.0"
 REPO="cyperx84/herdr-sesh-bro"
 
 os=$(uname -s)
@@ -100,10 +100,10 @@ target=$(platform_target)
 # to a 404.
 expected_sha256() {
     case "$1" in
-        darwin-arm64) echo "b168b883aa4825a5ffe4923b4c4c67593295dce367a92445539f1e0de5206340" ;;
-        darwin-amd64) echo "b7d546efb90a5d502458b88e07dd1dbe7588720c3d485c8d5ce3254ff0e1e9d2" ;;
-        linux-amd64)  echo "89de81759e1ec43fe8d69878d80438ee7ad57e37861632023d3f540991880a36" ;;
-        linux-arm64)  echo "6f0e4961a3ddadf3838e7b693ebd3927ff848e5e4bce626747fcbc987c455f6a" ;;
+        darwin-arm64) echo "UNRELEASED" ;;
+        darwin-amd64) echo "UNRELEASED" ;;
+        linux-amd64)  echo "UNRELEASED" ;;
+        linux-arm64)  echo "UNRELEASED" ;;
         *) return 1 ;;
     esac
 }
