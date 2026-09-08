@@ -68,6 +68,21 @@ func connect(ctx context.Context, env *appEnv, client *herdrx.Client, openErr er
 		return connectDir(ctx, env, client, openErr, target)
 	case "worktree":
 		return connectWorktree(ctx, env, client, openErr, target)
+	case "issue":
+		// Enter on an issue means "give me somewhere to work on this", which
+		// is exactly what the worktree command already does with a URL: a real
+		// git worktree on a branch named for the issue, opened as a workspace
+		// labelled with the issue title. Called again for the same issue it
+		// focuses the existing workspace, so pressing Enter twice is safe.
+		//
+		// Reusing the command rather than its internals keeps ONE path that
+		// creates worktrees for issues, including its repository verification
+		// — the guard that stops a wrong repo guess materialising a branch
+		// inside somebody's dotfiles checkout.
+		if code := cmdWorktree(ctx, env, []string{target}); code != 0 {
+			return fmt.Errorf("sesh-bro: worktree for %s failed", target)
+		}
+		return nil
 	case "session":
 		// The whole cross-session escape hatch: a new terminal running
 		// `herdr session attach`. See attach.go for why nothing else works.

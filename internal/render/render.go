@@ -53,6 +53,10 @@ func StatusColor(status string) string {
 		// have not opened, the other is any directory you have visited — is
 		// exactly what the colour has to carry.
 		return "\x1b[35m"
+	case "issue":
+		// Green, the idle colour, because an open issue is exactly that: work
+		// sitting there, nothing wrong, nobody waiting on you this second.
+		return "\x1b[32m"
 	case "session":
 		// Bright black, the same dim the unknown status gets. A whole other
 		// session is context, not something demanding attention, and it must
@@ -75,6 +79,7 @@ type Icons struct {
 	Worktree  string
 	Session   string
 	RAgent    string
+	Issue     string
 }
 
 // DefaultIcons returns bash's built-in glyphs (sesh-bro lines 43-45), used
@@ -105,6 +110,10 @@ const (
 	// terminal attached to that session.
 	KindSession Kind = "session"
 	KindRAgent  Kind = "ragent"
+	// KindIssue is an open GitHub issue in the repository the picker was
+	// opened from — the only row type naming work that does not exist on the
+	// machine yet.
+	KindIssue Kind = "issue"
 )
 
 // FormatRow renders one `list` row exactly as bash's row-render loop does
@@ -140,6 +149,8 @@ func FormatRow(kind Kind, target, status, label, detail string, icons Icons) (st
 		color, glyph = StatusColor("dir"), icons.Dir
 	case KindWorktree:
 		color, glyph = StatusColor("worktree"), icons.Worktree
+	case KindIssue:
+		color, glyph = StatusColor("issue"), icons.Issue
 	case KindSession:
 		color, glyph = StatusColor("session"), icons.Session
 	case KindRAgent:
@@ -409,4 +420,19 @@ func PreviewSessionFooter(name string) string {
 // rendering a failure the user can do nothing about.
 func PreviewSessionUnreachable(name string) string {
 	return Dim + "(session " + name + " is not answering)" + Reset + "\n"
+}
+
+// PreviewIssue renders the header for a GitHub issue row: the identity, the
+// full title the row had to truncate, and the URL.
+//
+// The URL is there because it is the one thing a person might want to copy out
+// of a preview, and because it makes plain what Enter is about to create a
+// worktree for.
+func PreviewIssue(owner, repo, num, title, url string) string {
+	out := StatusColor("issue") + "◇ " + owner + "/" + repo + "#" + num + Reset + "\n\n"
+	if title != "" {
+		out += title + "\n\n"
+	}
+	out += Dim + url + Reset + "\n\n"
+	return out + Dim + "enter creates a git worktree on a branch for this issue" + Reset + "\n"
 }

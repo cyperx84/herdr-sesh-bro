@@ -214,8 +214,24 @@ your behalf to make a pin durable.
 ### Work on a GitHub issue
 
 ```sh
-sesh-bro worktree https://github.com/owner/repo/issues/409
+sesh-bro list --issues --jsonl                              # open issues, this repo
+sesh-bro worktree https://github.com/owner/repo/issues/409  # somewhere to work on one
 ```
+
+`list --issues` reports the open issues of the repository you are in, resolved
+from `HERDR_WORKSPACE_ID`'s workspace when you are inside herdr and from the
+process's own directory when you are not. Each row's target is the issue URL,
+which is what `worktree` takes.
+
+Issues are **not** in the default source set, unlike workspaces, agents, dirs
+and worktrees. Every other source reads state herdr or the filesystem already
+holds; this one is a network call to GitHub, and a bare `list` must not make
+one. Results are cached on disk for ten minutes, including an empty result.
+
+Pull requests are deliberately absent. `worktree` creates a fresh branch named
+for the number, which is right for an issue and wrong for a PR — a PR needs its
+own head branch checked out. Listing PRs with that Enter action would be a row
+that looks right and does the wrong thing.
 
 Creates a real `git worktree` on a branch named for the issue, opens it as a
 workspace, and labels it with the issue title (resolved via `gh`, cached for a

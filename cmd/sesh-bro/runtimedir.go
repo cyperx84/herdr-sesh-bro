@@ -65,7 +65,7 @@ func readView(dir string) string {
 // pickerViews are the row files kept in sync, one per filter key plus the
 // default. They exist as files so a filter keypress costs a file read rather
 // than a process start and a daemon round trip.
-var pickerViews = []string{"all", "workspaces", "agents", "blocked", "dirs", "worktrees"}
+var pickerViews = []string{"all", "workspaces", "agents", "blocked", "dirs", "worktrees", "issues"}
 
 // viewFlags maps a view name to the `list` flags that produce it.
 func viewFlags(view string) []string {
@@ -80,6 +80,8 @@ func viewFlags(view string) []string {
 		return []string{"--dirs"}
 	case "worktrees":
 		return []string{"--worktrees"}
+	case "issues":
+		return []string{"--issues"}
 	default:
 		return nil
 	}

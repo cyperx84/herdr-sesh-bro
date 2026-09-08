@@ -125,14 +125,7 @@ func cmdWorktree(ctx context.Context, env *appEnv, args []string) int {
 
 	// 24h gh-title cache (BEHAVIOUR.md §2.7). Cache dir: $HERDR_PLUGIN_STATE_DIR,
 	// else $TMPDIR-or-/tmp/sesh-bro-<uid> (sesh-bro:405).
-	cacheDir := env.getenv("HERDR_PLUGIN_STATE_DIR")
-	if cacheDir == "" {
-		tmp := env.getenv("TMPDIR")
-		if tmp == "" {
-			tmp = "/tmp"
-		}
-		cacheDir = filepath.Join(tmp, fmt.Sprintf("sesh-bro-%d", os.Getuid()))
-	}
+	cacheDir := ghTitleCacheDir(env.getenv)
 	// DIVERGENCE, DELIBERATE: sesh-bro:406's `mkdir -p "$cache_dir"` has NO
 	// `||` guard, so under `set -euo pipefail` a REAL mkdir failure (e.g.
 	// permission denied on $TMPDIR) would abort the whole script right
@@ -241,3 +234,21 @@ func cmdWorktree(ctx context.Context, env *appEnv, args []string) int {
 // the same plain-workspace fallback as a failed worktree.create, without
 // pretending an error came back from herdr.
 var errNoRepoCheckout = errors.New("sesh-bro: no confirmed checkout for this repo")
+
+// ghTitleCacheDir is where resolved issue titles live (BEHAVIOUR.md §2.7,
+// sesh-bro:405): the plugin state dir, else a uid-scoped directory under
+// TMPDIR.
+//
+// Shared with `preview issue` rather than duplicated, so the two features warm
+// the same cache. A preview that missed while worktree hit would make gh run
+// twice for the same title and, worse, could disagree about it.
+func ghTitleCacheDir(getenv func(string) string) string {
+	if dir := getenv("HERDR_PLUGIN_STATE_DIR"); dir != "" {
+		return dir
+	}
+	tmp := getenv("TMPDIR")
+	if tmp == "" {
+		tmp = "/tmp"
+	}
+	return filepath.Join(tmp, fmt.Sprintf("sesh-bro-%d", os.Getuid()))
+}

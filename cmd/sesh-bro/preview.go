@@ -10,9 +10,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	herdr "github.com/cyperx84/herdr-api"
 
+	"github.com/cyperx84/herdr-sesh-bro/internal/external"
 	"github.com/cyperx84/herdr-sesh-bro/internal/herdrx"
 	"github.com/cyperx84/herdr-sesh-bro/internal/render"
 )
@@ -35,6 +37,8 @@ func cmdPreview(ctx context.Context, env *appEnv, args []string) int {
 		return previewAgent(ctx, env, client, openErr, target)
 	case "dir":
 		return previewDir(env, target)
+	case "issue":
+		return previewIssue(ctx, env, target)
 	case "session", "ragent":
 		return previewForeign(ctx, env, kind, target)
 	default:
@@ -303,5 +307,26 @@ func previewForeign(ctx context.Context, env *appEnv, kind, target string) int {
 		fmt.Fprint(env.stdout, render.PreviewSessionAgentLine(r.Status, r.Label, r.Detail))
 	}
 	fmt.Fprint(env.stdout, render.PreviewSessionFooter(name))
+	return 0
+}
+
+// previewIssue shows what the row cannot fit: the full title, and the identity
+// of the repository the issue belongs to.
+//
+// It goes through ResolveIssueTitle, which is the same 24-hour cache the
+// `worktree` command already fills when it labels a workspace. That reuse is
+// the whole design: a preview must not make a network call per highlighted row
+// — scrolling the issues block would then be a burst of gh invocations — and
+// sharing the cache means the two features warm each other. A cache miss with
+// gh absent yields no title and the header alone, exactly as `worktree`
+// degrades.
+func previewIssue(ctx context.Context, env *appEnv, target string) int {
+	ref, err := external.ParseWorktreeRef(target)
+	if err != nil {
+		fmt.Fprint(env.stdout, render.PreviewUnknown())
+		return 0
+	}
+	title, _ := external.ResolveIssueTitle(ctx, ghTitleCacheDir(env.getenv), ref, time.Now(), "")
+	fmt.Fprint(env.stdout, render.PreviewIssue(ref.Owner, ref.Repo, ref.Num, title, target))
 	return 0
 }

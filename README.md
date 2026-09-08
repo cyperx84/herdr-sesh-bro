@@ -16,7 +16,7 @@ sesh> alpha                                       ▲ 40%
 ● beta   claude · Rename arcade route  [feat/x]   │
 ▸ my-project  /Users/me/github/my-project         │
                                                   ▼
-enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^t worktrees · ^o all · ^s star · ^y reply · alt-x close · ^/ create
+enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^t worktrees · alt-i issues · ^o all · ^s star · ^y reply · alt-x close · ^/ create
 ```
 
 ## Features
@@ -131,6 +131,7 @@ sesh-bro worktree [URL]  # create/focus the workspace for a GitHub issue/PR
 | `^b` | reload: blocked agents only |
 | `^x` | reload: directories only |
 | `^t` | reload: git worktrees you have not opened |
+| `alt-i` | reload: open GitHub issues for this repo (enter creates a worktree) |
 | `^o` | reload: all sources |
 | `^s` | pin the highlighted agent to the top of its status group |
 | `^y` | send canned reply 1 to the highlighted agent (blocked agents only) |
@@ -372,6 +373,9 @@ schema exposes. Set them in your shell, or via Herdr's config UI:
 | `SESH_BRO_KEY_BLOCKED` | `ctrl-b` | Reload: blocked agents only |
 | `SESH_BRO_KEY_DIRS` | `ctrl-x` | Reload: directories only |
 | `SESH_BRO_KEY_WORKTREES` | `ctrl-t` | Reload: unopened git worktrees only |
+| `SESH_BRO_KEY_ISSUES` | `alt-i` | Reload: open GitHub issues only |
+| `SESH_BRO_ISSUE_SOURCES` | `1` | Allow the GitHub issues block at all |
+| `SESH_BRO_ICON_ISSUE` | `◇` | Glyph for an issue row |
 | `SESH_BRO_KEY_STAR` | `ctrl-s` | Pin the highlighted agent |
 | `SESH_BRO_KEY_REPLY` | `ctrl-y` | Send canned reply 1 to a blocked agent |
 | `SESH_BRO_KEY_ALL` | `ctrl-o` | Reload: all sources |

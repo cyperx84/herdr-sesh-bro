@@ -212,6 +212,7 @@ type KeyBindings struct {
 	Blocked    string // reload: blocked agents only.
 	Dirs       string // reload: directories only.
 	Worktrees  string // reload: unopened git worktrees only.
+	Issues     string // reload: open GitHub issues for this repo only.
 	Star       string // toggle the highlighted agent's pin.
 	Reply      string // send the first canned reply to a blocked agent.
 	All        string // reload: all sources.
@@ -243,11 +244,14 @@ var DefaultKeyBindings = KeyBindings{
 	Blocked:    "ctrl-b",
 	Dirs:       "ctrl-x",
 	Worktrees:  "ctrl-t",
-	Star:       "ctrl-s",
-	Reply:      "ctrl-y",
-	All:        "ctrl-o",
-	Create:     "ctrl-/",
-	Close:      "alt-x",
+	// alt-i, not ctrl-i: a terminal sends ctrl-i as Tab, so binding it would
+	// steal the multi-select key and be impossible to press on its own.
+	Issues: "alt-i",
+	Star:   "ctrl-s",
+	Reply:  "ctrl-y",
+	All:    "ctrl-o",
+	Create: "ctrl-/",
+	Close:  "alt-x",
 }
 
 // validKey reports whether a SESH_BRO_KEY_* override is a key fzf will
@@ -327,6 +331,7 @@ func (k KeyBindings) resolved() KeyBindings {
 		Blocked:    sanitizeKey(k.Blocked, DefaultKeyBindings.Blocked),
 		Dirs:       sanitizeKey(k.Dirs, DefaultKeyBindings.Dirs),
 		Worktrees:  sanitizeKey(k.Worktrees, DefaultKeyBindings.Worktrees),
+		Issues:     sanitizeKey(k.Issues, DefaultKeyBindings.Issues),
 		Star:       sanitizeKey(k.Star, DefaultKeyBindings.Star),
 		Reply:      sanitizeKey(k.Reply, DefaultKeyBindings.Reply),
 		All:        sanitizeKey(k.All, DefaultKeyBindings.All),
@@ -448,9 +453,9 @@ func BuildArgs(opts Options) []string {
 	// frees the header for the live counts row. Below that version they stay
 	// exactly where they have always been.
 	hints := fmt.Sprintf(
-		"enter connect · %s workspaces · %s agents · %s blocked · %s dirs · %s worktrees · %s all · %s star · %s reply · %s close · %s create",
+		"enter connect · %s workspaces · %s agents · %s blocked · %s dirs · %s worktrees · %s issues · %s all · %s star · %s reply · %s close · %s create",
 		keyLabel(keys.Workspaces), keyLabel(keys.Agents), keyLabel(keys.Blocked),
-		keyLabel(keys.Dirs), keyLabel(keys.Worktrees), keyLabel(keys.All),
+		keyLabel(keys.Dirs), keyLabel(keys.Worktrees), keyLabel(keys.Issues), keyLabel(keys.All),
 		keyLabel(keys.Star), keyLabel(keys.Reply), keyLabel(keys.Close), keyLabel(keys.Create),
 	)
 	if opts.Fzf.Footer {
@@ -528,6 +533,7 @@ func BuildArgs(opts Options) []string {
 		viewBind(opts, keys.Blocked, "blocked", selfQ, hide),
 		viewBind(opts, keys.Dirs, "dirs", selfQ, hide),
 		viewBind(opts, keys.Worktrees, "worktrees", selfQ, hide),
+		viewBind(opts, keys.Issues, "issues", selfQ, hide),
 		// Pin the highlighted agent. execute-silent because there is nothing
 		// to confirm and nothing to read — unlike close, a pin is trivially
 		// reversible by pressing the same key again.

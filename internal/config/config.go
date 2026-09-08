@@ -104,6 +104,7 @@ type Config struct {
 	IconWorktree  string
 	IconSession   string
 	IconRAgent    string
+	IconIssue     string
 
 	// KeyWorkspaces, KeyAgents, KeyBlocked, KeyDirs, KeyAll, KeyCreate,
 	// KeyClose are SESH_BRO_KEY_WORKSPACES/AGENTS/BLOCKED/DIRS/ALL/CREATE/
@@ -126,15 +127,18 @@ type Config struct {
 	KeyDirs       string
 	KeyWorktrees  string
 	KeyStar       string
+	KeyIssues     string
 	KeyReply      string
 
 	// foreignIntervalRaw holds SESH_BRO_FOREIGN_INTERVAL, a duration.
 	foreignIntervalRaw string
 	// allSessionsRaw holds SESH_BRO_ALL_SESSIONS.
 	allSessionsRaw string
-	KeyAll         string
-	KeyCreate      string
-	KeyClose       string
+	// issueSourcesRaw holds SESH_BRO_ISSUE_SOURCES.
+	issueSourcesRaw string
+	KeyAll          string
+	KeyCreate       string
+	KeyClose        string
 
 	// previewEnabledRaw, hideCurrentRaw, dirSourcesRaw hold
 	// CFG_PREVIEW_ENABLED/HIDE_CURRENT/DIR_SOURCES after the resolution
@@ -199,15 +203,18 @@ func Load(getenv func(string) string) Config {
 		IconWorktree:       orDefault(getenv("SESH_BRO_ICON_WORKTREE"), "⑂"),
 		IconSession:        orDefault(getenv("SESH_BRO_ICON_SESSION"), "▣"),
 		IconRAgent:         orDefault(getenv("SESH_BRO_ICON_RAGENT"), "○"),
+		IconIssue:          orDefault(getenv("SESH_BRO_ICON_ISSUE"), "◇"),
 		KeyWorkspaces:      orDefault(getenv("SESH_BRO_KEY_WORKSPACES"), "ctrl-w"),
 		KeyAgents:          orDefault(getenv("SESH_BRO_KEY_AGENTS"), "ctrl-e"),
 		KeyBlocked:         orDefault(getenv("SESH_BRO_KEY_BLOCKED"), "ctrl-b"),
 		KeyDirs:            orDefault(getenv("SESH_BRO_KEY_DIRS"), "ctrl-x"),
 		KeyWorktrees:       orDefault(getenv("SESH_BRO_KEY_WORKTREES"), "ctrl-t"),
 		KeyStar:            orDefault(getenv("SESH_BRO_KEY_STAR"), "ctrl-s"),
+		KeyIssues:          orDefault(getenv("SESH_BRO_KEY_ISSUES"), "alt-i"),
 		KeyReply:           orDefault(getenv("SESH_BRO_KEY_REPLY"), "ctrl-y"),
 		foreignIntervalRaw: orDefault(getenv("SESH_BRO_FOREIGN_INTERVAL"), "5s"),
 		allSessionsRaw:     orDefault(getenv("SESH_BRO_ALL_SESSIONS"), "0"),
+		issueSourcesRaw:    orDefault(getenv("SESH_BRO_ISSUE_SOURCES"), "1"),
 		KeyAll:             orDefault(getenv("SESH_BRO_KEY_ALL"), "ctrl-o"),
 		KeyCreate:          orDefault(getenv("SESH_BRO_KEY_CREATE"), "ctrl-/"),
 		KeyClose:           orDefault(getenv("SESH_BRO_KEY_CLOSE"), "alt-x"),
@@ -328,6 +335,7 @@ func (c Config) Icons() render.Icons {
 		Worktree:  c.IconWorktree,
 		Session:   c.IconSession,
 		RAgent:    c.IconRAgent,
+		Issue:     c.IconIssue,
 	}
 }
 
@@ -344,6 +352,7 @@ func (c Config) Keys() picker.KeyBindings {
 		Blocked:    c.KeyBlocked,
 		Dirs:       c.KeyDirs,
 		Worktrees:  c.KeyWorktrees,
+		Issues:     c.KeyIssues,
 		Star:       c.KeyStar,
 		Reply:      c.KeyReply,
 		All:        c.KeyAll,
@@ -422,4 +431,16 @@ func (c Config) ForeignInterval() (time.Duration, error) {
 // show. It is opt-in for the people who actually run two.
 func (c Config) AllSessions() (bool, error) {
 	return ParseBoolFlag("SESH_BRO_ALL_SESSIONS", c.allSessionsRaw)
+}
+
+// IssueSources reports whether the GitHub issues block may be built.
+//
+// Default ON, which looks inconsistent with SESH_BRO_ALL_SESSIONS defaulting
+// off and is not: issues are never in the default source set, so this gate is
+// only ever consulted by someone who already asked for them with --issues or
+// the picker's key. It exists to let a user who does not want sesh-bro talking
+// to GitHub at all turn the capability off, rather than to decide whether the
+// block appears by default.
+func (c Config) IssueSources() (bool, error) {
+	return ParseBoolFlag("SESH_BRO_ISSUE_SOURCES", c.issueSourcesRaw)
 }

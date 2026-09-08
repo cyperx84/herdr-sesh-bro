@@ -88,7 +88,7 @@ func TestAssembleBlocks_DefaultOrder(t *testing.T) {
 	ws := []herdrx.Row{mkRow(herdrx.RowWorkspace, "w1")}
 	ag := []herdrx.Row{mkRow(herdrx.RowAgent, "a1")}
 	dir := []herdrx.Row{mkRow(herdrx.RowDir, "/tmp")}
-	got := assembleBlocks("", ws, ag, dir, nil)
+	got := assembleBlocks("", ws, ag, dir, nil, nil)
 	wantTargets := []string{"w1", "a1", "/tmp"}
 	assertTargets(t, got, wantTargets)
 }
@@ -99,7 +99,7 @@ func TestAssembleBlocks_CustomOrderReorders(t *testing.T) {
 	ws := []herdrx.Row{mkRow(herdrx.RowWorkspace, "w1")}
 	ag := []herdrx.Row{mkRow(herdrx.RowAgent, "a1")}
 	dir := []herdrx.Row{mkRow(herdrx.RowDir, "/tmp")}
-	got := assembleBlocks("agents,dirs,workspaces", ws, ag, dir, nil)
+	got := assembleBlocks("agents,dirs,workspaces", ws, ag, dir, nil, nil)
 	assertTargets(t, got, []string{"a1", "/tmp", "w1"})
 }
 
@@ -111,7 +111,7 @@ func TestAssembleBlocks_DropsUnlistedBlocks(t *testing.T) {
 	ws := []herdrx.Row{mkRow(herdrx.RowWorkspace, "w1")}
 	ag := []herdrx.Row{mkRow(herdrx.RowAgent, "a1")}
 	dir := []herdrx.Row{mkRow(herdrx.RowDir, "/tmp")}
-	got := assembleBlocks("agents", ws, ag, dir, nil)
+	got := assembleBlocks("agents", ws, ag, dir, nil, nil)
 	assertTargets(t, got, []string{"a1"})
 }
 
@@ -119,7 +119,7 @@ func TestAssembleBlocks_DropsUnlistedBlocks(t *testing.T) {
 // token named twice duplicates that block's rows.
 func TestAssembleBlocks_RepeatedTokenDuplicatesBlock(t *testing.T) {
 	ag := []herdrx.Row{mkRow(herdrx.RowAgent, "a1")}
-	got := assembleBlocks("agents,agents", nil, ag, nil, nil)
+	got := assembleBlocks("agents,agents", nil, ag, nil, nil, nil)
 	assertTargets(t, got, []string{"a1", "a1"})
 }
 
@@ -127,7 +127,7 @@ func TestAssembleBlocks_RepeatedTokenDuplicatesBlock(t *testing.T) {
 // statement's silent no-op for a token that isn't workspaces/agents/dirs.
 func TestAssembleBlocks_UnrecognisedTokenIgnored(t *testing.T) {
 	ag := []herdrx.Row{mkRow(herdrx.RowAgent, "a1")}
-	got := assembleBlocks("bogus,agents", nil, ag, nil, nil)
+	got := assembleBlocks("bogus,agents", nil, ag, nil, nil, nil)
 	assertTargets(t, got, []string{"a1"})
 }
 

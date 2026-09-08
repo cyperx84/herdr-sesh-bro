@@ -30,7 +30,7 @@ func TestBuildArgs_Default(t *testing.T) {
 		"--tiebreak=index",
 		"--query=",
 		"--prompt=sesh> ",
-		"--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^t worktrees · ^o all · ^s star · ^y reply · alt-x close · ^/ create",
+		"--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^t worktrees · alt-i issues · ^o all · ^s star · ^y reply · alt-x close · ^/ create",
 		"--preview='/opt/sesh-bro/sesh-bro' preview {1} {2}",
 		"--preview-window=right,60%,border-left",
 		"--bind=alt-x:execute('/opt/sesh-bro/sesh-bro' close --from-file {+f})+reload('/opt/sesh-bro/sesh-bro' list --header )",
@@ -38,6 +38,7 @@ func TestBuildArgs_Default(t *testing.T) {
 		"--bind=ctrl-e:reload('/opt/sesh-bro/sesh-bro' list --agents --header )",
 		"--bind=ctrl-b:reload('/opt/sesh-bro/sesh-bro' list --blocked --header )",
 		"--bind=ctrl-x:reload('/opt/sesh-bro/sesh-bro' list --dirs --header )", "--bind=ctrl-t:reload('/opt/sesh-bro/sesh-bro' list --worktrees --header )",
+		"--bind=alt-i:reload('/opt/sesh-bro/sesh-bro' list --issues --header )",
 		"--bind=ctrl-s:execute-silent('/opt/sesh-bro/sesh-bro' star --toggle {2})+reload('/opt/sesh-bro/sesh-bro' list --header )",
 		"--bind=ctrl-y:execute-silent('/opt/sesh-bro/sesh-bro' reply {2})+reload('/opt/sesh-bro/sesh-bro' list --header )",
 		"--bind=ctrl-o:reload('/opt/sesh-bro/sesh-bro' list --header )",
@@ -198,6 +199,7 @@ func TestKeyBindings_Resolved(t *testing.T) {
 		Blocked:    DefaultKeyBindings.Blocked,
 		Dirs:       DefaultKeyBindings.Dirs,
 		Worktrees:  DefaultKeyBindings.Worktrees,
+		Issues:     DefaultKeyBindings.Issues,
 		Star:       DefaultKeyBindings.Star,
 		Reply:      DefaultKeyBindings.Reply,
 		All:        DefaultKeyBindings.All,
@@ -243,7 +245,7 @@ func TestBuildArgs_KeyOverrides(t *testing.T) {
 			Create: "bad:key", // malformed -> falls back to ctrl-/
 		},
 	})
-	wantHeader := "--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^t worktrees · ^o all · ^s star · ^y reply · ^d close · ^/ create"
+	wantHeader := "--header=enter connect · ^w workspaces · ^e agents · ^b blocked · ^x dirs · ^t worktrees · alt-i issues · ^o all · ^s star · ^y reply · ^d close · ^/ create"
 	wantCloseBind := "--bind=ctrl-d:execute('/bin/sesh-bro' close --from-file {+f})+reload('/bin/sesh-bro' list --header )"
 	wantCreateBind := "--bind=ctrl-/:execute-silent('/bin/sesh-bro' create)+reload('/bin/sesh-bro' list --header )"
 	for _, want := range []string{wantHeader, wantCloseBind, wantCreateBind} {
@@ -569,7 +571,7 @@ func TestFilterKeysReloadFromPreRenderedFiles(t *testing.T) {
 		SelfPath: "/bin/sesh-bro", RowsDir: "/run/p1",
 		Fzf: Features{Version: "0.74.3", Listen: true},
 	})
-	for _, key := range []string{"ctrl-w", "ctrl-e", "ctrl-b", "ctrl-x", "ctrl-t", "ctrl-o"} {
+	for _, key := range []string{"ctrl-w", "ctrl-e", "ctrl-b", "ctrl-x", "ctrl-t", "alt-i", "ctrl-o"} {
 		var bind string
 		for _, a := range got {
 			if strings.HasPrefix(a, "--bind="+key+":") {

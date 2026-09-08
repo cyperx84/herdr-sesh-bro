@@ -11,6 +11,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 type listFlags struct {
 	wantWS, wantAgent, wantDir bool
 	wantWorktree               bool
+	wantIssue                  bool
 	statuses                   []herdr.AgentStatus
 	hideCurrent                bool
 	asJSON                     bool
@@ -68,20 +71,22 @@ func parseListFlags(args []string) (listFlags, error) {
 			f.wantAgent, sourceFlag = true, true
 		case "--worktrees":
 			f.wantWorktree, sourceFlag = true, true
+		case "--issues":
+			f.wantIssue, sourceFlag = true, true
 		case "--dirs":
 			f.wantDir, sourceFlag = true, true
 		case "--blocked":
 			f.statuses = append(f.statuses, herdr.StatusBlocked)
-			f.wantAgent, f.wantWS, f.wantDir, f.wantWorktree, sourceFlag = true, false, false, false, true
+			f.wantAgent, f.wantWS, f.wantDir, f.wantWorktree, f.wantIssue, sourceFlag = true, false, false, false, false, true
 		case "--working":
 			f.statuses = append(f.statuses, herdr.StatusWorking)
-			f.wantAgent, f.wantWS, f.wantDir, f.wantWorktree, sourceFlag = true, false, false, false, true
+			f.wantAgent, f.wantWS, f.wantDir, f.wantWorktree, f.wantIssue, sourceFlag = true, false, false, false, false, true
 		case "--done":
 			f.statuses = append(f.statuses, herdr.StatusDone)
-			f.wantAgent, f.wantWS, f.wantDir, f.wantWorktree, sourceFlag = true, false, false, false, true
+			f.wantAgent, f.wantWS, f.wantDir, f.wantWorktree, f.wantIssue, sourceFlag = true, false, false, false, false, true
 		case "--idle":
 			f.statuses = append(f.statuses, herdr.StatusIdle)
-			f.wantAgent, f.wantWS, f.wantDir, f.wantWorktree, sourceFlag = true, false, false, false, true
+			f.wantAgent, f.wantWS, f.wantDir, f.wantWorktree, f.wantIssue, sourceFlag = true, false, false, false, false, true
 		case "--hide-current":
 			f.hideCurrent = true
 		case "--json":
@@ -97,6 +102,13 @@ func parseListFlags(args []string) (listFlags, error) {
 		}
 	}
 	if !sourceFlag {
+		// Issues are NOT in the default set, unlike the other four.
+		//
+		// Every other source reads state herdr or the filesystem already
+		// holds. This one is a network call to GitHub, and a bare `list` — the
+		// thing the picker runs on open, and the thing a driving agent runs
+		// first — must not make one. `--issues` and the picker's own key ask
+		// for them explicitly; nothing else does.
 		f.wantWS, f.wantAgent, f.wantDir, f.wantWorktree = true, true, true, true
 	}
 	return f, nil
@@ -157,6 +169,21 @@ type listSources struct {
 	// foreign holds the other running sessions' snapshots, empty unless
 	// --all-sessions asked for them.
 	foreign []herdrx.ForeignSnapshot
+	// issues are the repository's open GitHub issues, and issuesAt when they
+	// were read. Both stay zero on every render that did not ask for them.
+	issues   []external.Issue
+	issuesAt time.Time
+	// repoRoot is the checkout the issues belong to, and repoRootResolved says
+	// the resolution has been attempted.
+	//
+	// The flag is needed because "" is a legitimate ANSWER — not in a
+	// repository, or not a GitHub one — and without it every event would
+	// re-run `git rev-parse` to learn the same nothing, which is the per-event
+	// subprocess 0.4.1 exists to prevent. The root cannot change under a live
+	// picker anyway: it derives from HERDR_WORKSPACE_ID, fixed for the life of
+	// the process, or from the process's own directory.
+	repoRoot         string
+	repoRootResolved bool
 	// allSessions is the resolved answer to "show other sessions", flag ORed
 	// with config, so the renderer does not have to ask again with a Config it
 	// may not have.
@@ -320,6 +347,36 @@ func refreshSources(ctx context.Context, env *appEnv, cfg config.Config, flags l
 			src.zoxide = prev.zoxide
 		case external.ZoxideAvailable():
 			src.zoxide = external.ZoxideList(ctx)
+		}
+	}
+
+	// Issues. The ONE source that touches the network, and therefore the one
+	// with a rule the others do not need: gh is never run on a render that a
+	// keypress is waiting on.
+	//
+	// A cold call (prev == nil) is the headless `list --issues` path, where the
+	// caller asked for issues and is willing to wait for them. Inside a live
+	// picker every render passes prev, so the disk cache is the only source —
+	// and the cache is warmed by a background goroutine at picker start (see
+	// live.go), which is what makes the issues view populated by the time
+	// anybody presses its key.
+	if flags.wantIssue {
+		issueSources, err := cfg.IssueSources()
+		if err != nil {
+			return listSources{}, err
+		}
+		if issueSources {
+			if prev != nil && prev.repoRootResolved {
+				src.repoRoot, src.repoRootResolved = prev.repoRoot, true
+			} else {
+				src.repoRoot, src.repoRootResolved = issueRepoRoot(env, snap), true
+			}
+			switch {
+			case prev != nil && !prev.issuesAt.IsZero() && prev.repoRoot == src.repoRoot:
+				src.issues, src.issuesAt = prev.issues, prev.issuesAt
+			default:
+				src.issues, src.issuesAt = loadIssues(ctx, env, src.repoRoot, prev == nil), time.Now()
+			}
 		}
 	}
 
@@ -509,6 +566,11 @@ func renderRows(ctx context.Context, cfg config.Config, flags listFlags, src lis
 		wtRows = herdrx.WorktreeRows(src.worktrees, cfg.Blacklist)
 	}
 
+	var issueRows []herdrx.Row
+	if flags.wantIssue && len(src.issues) > 0 {
+		issueRows = herdrx.IssueRows(src.issues)
+	}
+
 	// Attention hoist (BEHAVIOUR.md §10, superseding the ordering of
 	// §2.2.4-2.2.7). Blocked and done agents leave the agents block and go
 	// above every other block, from whichever workspace they belong to, so
@@ -525,9 +587,9 @@ func renderRows(ctx context.Context, cfg config.Config, flags listFlags, src lis
 	if attentionFirst && flags.wantAgent {
 		attention, rest := herdrx.SplitAttention(agRows)
 		raw = append(raw, attention...)
-		raw = append(raw, assembleBlocks(cfg.SortOrder, wsRows, rest, dirRows, wtRows)...)
+		raw = append(raw, assembleBlocks(cfg.SortOrder, wsRows, rest, dirRows, wtRows, issueRows)...)
 	} else {
-		raw = assembleBlocks(cfg.SortOrder, wsRows, agRows, dirRows, wtRows)
+		raw = assembleBlocks(cfg.SortOrder, wsRows, agRows, dirRows, wtRows, issueRows)
 	}
 
 	// Foreign rows go LAST, unconditionally, and take no part in the attention
@@ -626,13 +688,13 @@ func listOutput(ctx context.Context, env *appEnv, args []string, w io.Writer) er
 // empty row slice is a silent no-op, which is exactly bash's own
 // `[[ -n $ws_block ]] && raw+=...` guard — no separate emptiness check is
 // needed here.
-func assembleBlocks(sortOrder string, ws, ag, dir, wt []herdrx.Row) []herdrx.Row {
+func assembleBlocks(sortOrder string, ws, ag, dir, wt, issues []herdrx.Row) []herdrx.Row {
 	// Worktrees sit last by default: they are the least likely thing you
 	// opened the picker for, and unlike the other three they are candidates
 	// that do not exist yet as sessions. A user who disagrees reorders them
 	// with SESH_BRO_SORT_ORDER like any other block (S5: a block absent from a
 	// non-empty sort_order is dropped entirely, which is how you hide them).
-	order := []string{"workspaces", "agents", "dirs", "worktrees"}
+	order := []string{"workspaces", "agents", "dirs", "worktrees", "issues"}
 	if sortOrder != "" {
 		order = bashSplit(sortOrder, ',')
 	}
@@ -647,6 +709,8 @@ func assembleBlocks(sortOrder string, ws, ag, dir, wt []herdrx.Row) []herdrx.Row
 			raw = append(raw, dir...)
 		case "worktrees":
 			raw = append(raw, wt...)
+		case "issues":
+			raw = append(raw, issues...)
 		}
 	}
 	return raw
@@ -825,4 +889,77 @@ func foreignRows(src listSources) []herdrx.Row {
 		return nil
 	}
 	return herdrx.ForeignRows(src.foreign)
+}
+
+// issueRepoRoot resolves the git checkout whose issues the picker should show.
+//
+// The workspace the picker was opened FROM, not the process's working
+// directory: the picker runs in a popup whose cwd is wherever herdr spawned it,
+// which is not necessarily the project the user is looking at. Falling back to
+// the process cwd covers the headless case, where there is no workspace and the
+// caller's directory is exactly the right answer.
+func issueRepoRoot(env *appEnv, snap herdrx.Snapshot) string {
+	// HERDR_WORKSPACE_ID, not the resolved "current" workspace.
+	//
+	// The difference matters and is not a nicety. `current` falls back to
+	// whatever the DAEMON says is focused, which is right for ordering rows
+	// and wrong for this: a headless `list --issues` run from another repo's
+	// directory would then list the issues of whatever project the user
+	// happened to be looking at in herdr, with nothing on screen to say so.
+	// The env var is set only inside a pane herdr spawned, so its absence is
+	// exactly the signal that the caller's own directory is the answer.
+	cwd := ""
+	if ws := env.getenv("HERDR_WORKSPACE_ID"); ws != "" {
+		for _, p := range snap.Panes {
+			if p.WorkspaceID == ws && p.CWD != "" {
+				cwd = p.CWD
+				break
+			}
+		}
+	}
+	if cwd == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return ""
+		}
+		cwd = wd
+	}
+	root, ok := external.GitRoot(context.Background(), "", cwd)
+	if !ok {
+		return ""
+	}
+	return root
+}
+
+// loadIssues returns a repository's open issues, from cache when it is fresh.
+//
+// allowFetch is false inside a live picker. The cache is then the only source,
+// and a miss yields nothing rather than a network call on a render a keypress
+// is waiting on — the warm-up goroutine fills it instead.
+func loadIssues(ctx context.Context, env *appEnv, repoRoot string, allowFetch bool) []external.Issue {
+	if repoRoot == "" {
+		return nil
+	}
+	path := external.IssueCachePath(issueCacheDir(env.getenv), repoRoot)
+	if issues, ok := external.ReadIssueCache(path, time.Now()); ok {
+		return issues
+	}
+	if !allowFetch {
+		return nil
+	}
+	issues, err := external.ListIssues(ctx, repoRoot, "", nil)
+	if err != nil {
+		return nil
+	}
+	// Cached even when empty: "no open issues" is a real answer that cost a
+	// network round trip, and not recording it means paying again every render.
+	_ = external.WriteIssueCache(path, repoRoot, issues, time.Now())
+	return issues
+}
+
+// issueCacheDir is where cached issue lists live, beside the other durable
+// plugin state rather than in a temp directory: the whole point of a
+// ten-minute TTL is that it survives the picker closing and reopening.
+func issueCacheDir(getenv func(string) string) string {
+	return filepath.Join(filepath.Dir(statePath(getenv)), "issues")
 }

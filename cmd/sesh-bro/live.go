@@ -59,6 +59,7 @@ func startLiveUpdates(ctx context.Context, env *appEnv, cfg config.Config, dir s
 	go func() { _ = w.Run(ctx, client.Raw(), panes) }()
 
 	startForeignTicker(ctx, cfg, initial.allSessions, r)
+	warmIssueCache(ctx, env, cfg, r)
 
 	return cancel
 }
@@ -141,7 +142,10 @@ func (r *renderer) render(ctx context.Context, push, foreignTick bool) ([]string
 	// daemon-liveness gate is deliberately skipped — this is driven by an
 	// event that came FROM the daemon, so re-proving it is alive costs a
 	// round trip to learn nothing.
-	unionFlags := listFlags{wantWS: true, wantAgent: true, wantDir: true, wantWorktree: true, header: true}
+	// wantIssue is in the union so the issues VIEW re-renders from cache; the
+	// cold fetch is impossible here because prev is non-nil on every render
+	// after the first, which is exactly the rule that keeps gh off this path.
+	unionFlags := listFlags{wantWS: true, wantAgent: true, wantDir: true, wantWorktree: true, wantIssue: true, header: true}
 	src, err := refreshSources(ctx, r.env, r.cfg, unionFlags, r.prev, foreignTick)
 	if err != nil {
 		return nil, err
@@ -217,3 +221,37 @@ func (s *stringBuilder) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 func (s *stringBuilder) String() string { return string(s.b) }
+
+// warmIssueCache fetches the repository's open issues in the background, then
+// re-renders so the issues view has something in it.
+//
+// It exists because of one rule and one consequence. The rule: gh is a network
+// call, so it must never run on a render a keypress is waiting on — not the
+// picker's open, and not an event push. The consequence: without a warm-up the
+// issues view would be empty the first time it is pressed and populated the
+// second, which reads as the feature being broken.
+//
+// Doing the fetch here also means the wait is invisible. The user is looking at
+// their workspaces; by the time they reach for the issues key, gh has answered.
+//
+// The re-render passes keepGit for the same reason the foreign ticker does:
+// nothing local changed, and respawning git across every open workspace to
+// display an issue list would be a strange thing to pay for.
+func warmIssueCache(ctx context.Context, env *appEnv, cfg config.Config, r *renderer) {
+	if on, err := cfg.IssueSources(); err != nil || !on {
+		return
+	}
+	go func() {
+		// The cold path: prev == nil is what permits the fetch, and this is the
+		// one place inside a picker that is allowed to take it.
+		flags := listFlags{wantIssue: true}
+		src, err := refreshSources(ctx, env, cfg, flags, nil, false)
+		if err != nil || len(src.issues) == 0 {
+			// Nothing to show, or gh could not answer. Either way the issues
+			// view stays empty and every other view is untouched — a repo with
+			// no GitHub remote must not cost a re-render.
+			return
+		}
+		_, _ = r.render(ctx, true, true)
+	}()
+}
